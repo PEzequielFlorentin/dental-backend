@@ -8,17 +8,20 @@ WORKDIR /app
 # Copia archivos de dependencias
 COPY backend/package*.json ./
 
-# Instala dependencias de Node y muestra salida detallada
-RUN npm install --verbose
+# Instala dependencias y fuerza permisos
+RUN npm install --unsafe-perm
 
 # Copia el resto del código
 COPY backend/ .
 
-# Lista el contenido para debug (opcional)
-RUN ls -la
+# Da permisos de ejecución a todos los binarios de node_modules
+RUN chmod -R +x node_modules/.bin
 
-# Ejecuta prisma generate con salida detallada
-RUN npx prisma generate --verbose
+# Verifica que prisma tenga permisos
+RUN ls -la node_modules/.bin/prisma
+
+# Ejecuta prisma generate con ruta completa
+RUN node_modules/.bin/prisma generate --schema=prisma/schema.prisma
 
 EXPOSE 3000
 
