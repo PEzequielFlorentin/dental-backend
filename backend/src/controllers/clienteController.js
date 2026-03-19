@@ -7,6 +7,17 @@ const decimalToNumber = (decimalValue) => {
   return parseFloat(decimalValue.toString());
 };
 
+// Mapeo de strings de tipo a IDs (SOLO 2 TIPOS)
+const TIPO_TO_ID = {
+  'ODONTOLOGO': 1,
+  'CLINICA_DENTAL': 2
+};
+
+const ID_TO_TIPO = {
+  1: 'ODONTOLOGO',
+  2: 'CLINICA_DENTAL'
+};
+
 const clienteController = {
   // ========== FUNCIONES BÁSICAS ==========
   
@@ -37,9 +48,14 @@ const clienteController = {
       
       const whereClause = {};
       
-      // ✅ CORREGIDO: Usar id_tipo en lugar de tipo
+      // Convertir tipo string a ID si viene como string
       if (tipo && tipo !== 'TODOS') {
-        whereClause.id_tipo = parseInt(tipo);
+        if (TIPO_TO_ID[tipo]) {
+          whereClause.id_tipo = TIPO_TO_ID[tipo];
+        } else {
+          // Si ya es número, usarlo directamente
+          whereClause.id_tipo = parseInt(tipo);
+        }
       }
       
       const clientes = await prisma.cliente.findMany({
@@ -53,13 +69,20 @@ const clienteController = {
               usuario: true
             }
           } : false,
-          tipo_cliente: true // ✅ Incluir tipo_cliente
+          tipo_cliente: true
         }
       });
       
+      // Convertir id_tipo a string de tipo para el frontend
+      const clientesFormateados = clientes.map(cliente => ({
+        ...cliente,
+        tipo: cliente.tipo_cliente ? ID_TO_TIPO[cliente.id_tipo] : 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      }));
+      
       res.json({
         success: true,
-        data: clientes
+        data: clientesFormateados
       });
     } catch (error) {
       console.error('Error obteniendo clientes:', error);
@@ -78,7 +101,7 @@ const clienteController = {
         telefono, 
         celular, 
         email,
-        id_tipo, // ✅ CORREGIDO: usar id_tipo en lugar de tipo
+        tipo = 'ODONTOLOGO', // Valor por defecto
         id_administrador = 1
       } = req.body;
       
@@ -89,13 +112,31 @@ const clienteController = {
         });
       }
       
+      // Convertir tipo string a ID
+      let id_tipo = null;
+      if (tipo && TIPO_TO_ID[tipo]) {
+        id_tipo = TIPO_TO_ID[tipo];
+      } else {
+        id_tipo = 1; // Por defecto Odontólogo
+      }
+      
+      console.log('📝 Creando cliente con:', {
+        nombre,
+        telefono,
+        celular,
+        email,
+        tipo,
+        id_tipo,
+        id_administrador
+      });
+      
       const cliente = await prisma.cliente.create({
         data: {
           nombre,
           telefono: telefono || null,
           celular: celular || null,
           email: email || null,
-          id_tipo: id_tipo ? parseInt(id_tipo) : null,
+          id_tipo: id_tipo,
           id_administrador: id_administrador ? parseInt(id_administrador) : null
         },
         include: {
@@ -110,10 +151,17 @@ const clienteController = {
         }
       });
       
+      // Devolver con formato amigable para el frontend
+      const clienteFormateado = {
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      };
+      
       res.status(201).json({
         success: true,
         message: 'Cliente creado exitosamente',
-        data: cliente
+        data: clienteFormateado
       });
     } catch (error) {
       console.error('Error creando cliente:', error.message);
@@ -127,7 +175,8 @@ const clienteController = {
       
       res.status(500).json({
         success: false,
-        error: 'Error interno del servidor'
+        error: 'Error interno del servidor',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
@@ -183,9 +232,16 @@ const clienteController = {
         });
       }
       
+      // Formatear para el frontend
+      const clienteFormateado = {
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      };
+      
       res.json({
         success: true,
-        data: cliente
+        data: clienteFormateado
       });
     } catch (error) {
       console.error('Error obteniendo cliente:', error);
@@ -213,9 +269,14 @@ const clienteController = {
       if (updateData.id_administrador) {
         updateData.id_administrador = parseInt(updateData.id_administrador);
       }
-      if (updateData.id_tipo) {
-        updateData.id_tipo = parseInt(updateData.id_tipo);
+      
+      // Convertir tipo string a ID si viene
+      if (updateData.tipo) {
+        updateData.id_tipo = TIPO_TO_ID[updateData.tipo] || 1; // Por defecto Odontólogo
+        delete updateData.tipo; // Eliminar el campo tipo original
       }
+      
+      console.log('📝 Actualizando cliente:', updateData);
       
       const cliente = await prisma.cliente.update({
         where: { id: parseInt(id) },
@@ -232,10 +293,16 @@ const clienteController = {
         }
       });
       
+      const clienteFormateado = {
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      };
+      
       res.json({
         success: true,
         message: 'Cliente actualizado exitosamente',
-        data: cliente
+        data: clienteFormateado
       });
     } catch (error) {
       console.error('Error actualizando cliente:', error);
@@ -325,9 +392,15 @@ const clienteController = {
         orderBy: { nombre: 'asc' }
       });
       
+      const clientesFormateados = clientes.map(cliente => ({
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      }));
+      
       res.json({
         success: true,
-        data: clientes
+        data: clientesFormateados
       });
     } catch (error) {
       console.error('Error buscando clientes:', error);
@@ -362,18 +435,9 @@ const clienteController = {
     }
   },
 
-  // 8. Estadísticas por tipo (CORREGIDO)
+  // 8. Estadísticas por tipo (SOLO 2 TIPOS)
   async getStatsByTipo(req, res) {
     try {
-      // Obtener todos los tipos primero
-      const tipos = await prisma.tipo_cliente.findMany();
-      
-      // Crear un mapa de id -> descripción
-      const tipoMap = {};
-      tipos.forEach(t => {
-        tipoMap[t.id] = t.descripcion;
-      });
-
       // GroupBy por id_tipo
       const groupStats = await prisma.cliente.groupBy({
         by: ['id_tipo'],
@@ -382,18 +446,19 @@ const clienteController = {
         }
       });
 
-      // Formatear resultados
+      // Formatear resultados usando el mapeo de IDs a strings
       const stats = groupStats.map(item => ({
-        tipo: item.id_tipo ? tipoMap[item.id_tipo] || 'Desconocido' : 'Sin tipo',
+        tipo: ID_TO_TIPO[item.id_tipo] || 'ODONTOLOGO',
         count: item._count.id
       }));
 
       // Agregar tipos que no tienen clientes
-      tipos.forEach(tipo => {
-        const existe = stats.find(s => s.tipo === tipo.descripcion);
+      const tiposExistentes = ['ODONTOLOGO', 'CLINICA_DENTAL'];
+      tiposExistentes.forEach(tipoStr => {
+        const existe = stats.find(s => s.tipo === tipoStr);
         if (!existe) {
           stats.push({
-            tipo: tipo.descripcion,
+            tipo: tipoStr,
             count: 0
           });
         }
@@ -485,7 +550,8 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
-          tipo: cliente.tipo_cliente?.descripcion || 'Sin tipo',
+          tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+          tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
           administrador: cliente.administrador,
           balance: {
             total: totalFacturado,
@@ -592,7 +658,7 @@ const clienteController = {
     }
   },
 
-  // 11. NUEVO: CLIENTES CON TOTALES (CORREGIDO)
+  // 11. CLIENTES CON TOTALES
   async getClientesConTotales(req, res) {
     try {
       console.log('📊 Obteniendo clientes con totales...');
@@ -626,11 +692,14 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
-          tipo: cliente.tipo_cliente?.descripcion || 'Sin tipo',
+          tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
           tipoId: cliente.id_tipo,
+          tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
           administradorId: cliente.id_administrador,
           totalPedidos,
-          totalGastado
+          totalGastado,
+          createdAt: cliente.created_at,
+          updatedAt: cliente.updated_at
         };
       });
 

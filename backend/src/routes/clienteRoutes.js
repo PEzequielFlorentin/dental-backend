@@ -9,14 +9,14 @@ const clienteController = require('../controllers/clienteController');
 router.get('/health', clienteController.healthCheck);
 router.get('/stats/tipo', clienteController.getStatsByTipo);
 router.get('/con-balance', clienteController.getClientesConBalance);
-router.get('/con-totales', clienteController.getClientesConTotales); // ✅ NUEVA RUTA
+router.get('/con-totales', clienteController.getClientesConTotales);
 router.get('/estadisticas', clienteController.getEstadisticas);
-router.get('/buscar', clienteController.searchClientes); // ✅ QUERY STRING
+router.get('/buscar', clienteController.searchClientes);
 
 // ============================================
-// 🟡 2. RUTAS CON PARÁMETROS ESPECÍFICOS
+// 🟡 2. RUTA PRINCIPAL PARA OBTENER TODOS LOS CLIENTES
 // ============================================
-
+router.get('/', clienteController.getAllClientes); // ✅ AGREGAR ESTA RUTA
 
 // ============================================
 // 🔴 3. RUTA GENÉRICA POR ID - SIEMPRE AL FINAL
