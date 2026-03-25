@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
 
 // Función auxiliar para convertir Decimal a Number
 const decimalToNumber = (decimalValue) => {
@@ -41,7 +40,8 @@ const pedidoController = {
                 id: true,
                 nombre: true,
                 telefono: true,
-                email: true
+                email: true,
+                celular: true
               }
             },
             administrador: {
@@ -81,7 +81,7 @@ const pedidoController = {
         
         let estadoGeneral = 'pendiente';
         if (pedido.detalle_pedidos.length > 0) {
-          const estados = pedido.detalle_pedidos.map(d => d.estado?.descripcion);
+          const estados = pedido.detalle_pedidos.map(d => d.estado?.descripcion?.toLowerCase());
           if (estados.every(e => e === 'completado' || e === 'entregado')) estadoGeneral = 'entregado';
           else if (estados.some(e => e === 'en_proceso')) estadoGeneral = 'en_proceso';
         }
@@ -94,7 +94,7 @@ const pedidoController = {
           fecha_pedido: pedido.fecha_pedido,
           fecha_entrega: pedido.fecha_entrega,
           fecha_delete: pedido.fecha_delete,
-          descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
+          descripcion: pedido.descripcion,
           detalles: pedido.detalle_pedidos,
           pagos: pedido.detalle_pago,
           total: totalPedido,
@@ -224,7 +224,7 @@ const pedidoController = {
         id_cliente,
         id_administrador = 1,
         fecha_entrega,
-        descripcion, // ✅ NUEVO CAMPO
+        descripcion,
         detalles,
         pagos = []
       } = req.body;
@@ -249,6 +249,17 @@ const pedidoController = {
         });
       }
       
+      const adminExiste = await prisma.administrador.findUnique({
+        where: { id: parseInt(id_administrador) }
+      });
+      
+      if (!adminExiste) {
+        return res.status(404).json({
+          success: false,
+          message: 'Administrador no encontrado'
+        });
+      }
+      
       for (const detalle of detalles) {
         const producto = await prisma.producto.findUnique({
           where: { id: parseInt(detalle.id_producto) }
@@ -260,17 +271,28 @@ const pedidoController = {
             message: `Producto con ID ${detalle.id_producto} no encontrado`
           });
         }
+        
+        if (detalle.id_estado) {
+          const estado = await prisma.estado.findUnique({
+            where: { id: parseInt(detalle.id_estado) }
+          });
+          if (!estado) {
+            return res.status(404).json({
+              success: false,
+              message: `Estado con ID ${detalle.id_estado} no encontrado`
+            });
+          }
+        }
       }
       
       const resultado = await prisma.$transaction(async (prisma) => {
-        // Crear el pedido principal CON DESCRIPCIÓN
         const pedido = await prisma.pedidos.create({
           data: {
             id_cliente: parseInt(id_cliente),
             id_administrador: parseInt(id_administrador),
             fecha_pedido: new Date(),
             fecha_entrega: fecha_entrega ? new Date(fecha_entrega) : null,
-            descripcion: descripcion || null, // ✅ GUARDAR DESCRIPCIÓN
+            descripcion: descripcion || null,
             fecha_delete: null
           },
           include: {
@@ -279,7 +301,6 @@ const pedidoController = {
           }
         });
         
-        // Crear detalles del pedido
         const detallesCreados = await Promise.all(
           detalles.map(detalle => 
             prisma.detalle_pedidos.create({
@@ -299,7 +320,6 @@ const pedidoController = {
           )
         );
         
-        // Crear pagos si existen
         let pagosCreados = [];
         if (pagos && pagos.length > 0) {
           const pagoPrincipal = await prisma.pago.create({
@@ -409,6 +429,18 @@ const pedidoController = {
         });
       }
       
+      if (detalle.id_estado) {
+        const estado = await prisma.estado.findUnique({
+          where: { id: parseInt(detalle.id_estado) }
+        });
+        if (!estado) {
+          return res.status(404).json({
+            success: false,
+            message: 'Estado no encontrado'
+          });
+        }
+      }
+      
       const detalleCreado = await prisma.detalle_pedidos.create({
         data: {
           id_pedido: parseInt(id),
@@ -465,6 +497,20 @@ const pedidoController = {
         });
       }
       
+      const detalleExistente = await prisma.detalle_pedidos.findFirst({
+        where: { 
+          id: parseInt(detalleId),
+          id_pedido: parseInt(pedidoId)
+        }
+      });
+      
+      if (!detalleExistente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Detalle de pedido no encontrado'
+        });
+      }
+      
       const detalle = await prisma.detalle_pedidos.update({
         where: { 
           id: parseInt(detalleId),
@@ -501,15 +547,30 @@ const pedidoController = {
       const { id } = req.params;
       const { valor, fecha_pago, id_administrador = 1 } = req.body;
       
-      if (!valor) {
+      if (!valor || parseFloat(valor) <= 0) {
         return res.status(400).json({
           success: false,
-          message: 'Valor del pago es requerido'
+          message: 'Valor del pago es requerido y debe ser mayor a 0'
+        });
+      }
+      
+      const adminExiste = await prisma.administrador.findUnique({
+        where: { id: parseInt(id_administrador) }
+      });
+      
+      if (!adminExiste) {
+        return res.status(404).json({
+          success: false,
+          message: 'Administrador no encontrado'
         });
       }
       
       const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) }
+        where: { id: parseInt(id) },
+        include: {
+          detalle_pedidos: true,
+          detalle_pago: true
+        }
       });
       
       if (!pedido || pedido.fecha_delete) {
@@ -519,10 +580,30 @@ const pedidoController = {
         });
       }
       
+      let totalPedido = 0;
+      pedido.detalle_pedidos.forEach(detalle => {
+        totalPedido += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
+      });
+      
+      let totalPagadoActual = 0;
+      pedido.detalle_pago.forEach(detallePago => {
+        totalPagadoActual += decimalToNumber(detallePago.valor);
+      });
+      
+      const valorNumber = parseFloat(valor);
+      const saldoPendiente = totalPedido - totalPagadoActual;
+      
+      if (valorNumber > saldoPendiente) {
+        return res.status(400).json({
+          success: false,
+          message: `El valor excede el saldo pendiente ($${saldoPendiente.toFixed(2)})`
+        });
+      }
+      
       const resultado = await prisma.$transaction(async (prisma) => {
         const pago = await prisma.pago.create({
           data: {
-            valor: parseFloat(valor),
+            valor: valorNumber,
             id_administrador: parseInt(id_administrador)
           }
         });
@@ -531,7 +612,7 @@ const pedidoController = {
           data: {
             id_pago: pago.id,
             id_pedido: parseInt(id),
-            valor: parseFloat(valor),
+            valor: valorNumber,
             fecha_pago: fecha_pago ? new Date(fecha_pago) : new Date()
           },
           include: {
@@ -652,7 +733,7 @@ const pedidoController = {
         
         return {
           ...pedido,
-          descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
+          descripcion: pedido.descripcion,
           total: total,
           totalPagado: totalPagado,
           saldoPendiente: total - totalPagado,
@@ -761,137 +842,142 @@ const pedidoController = {
     }
   },
 
-  // ============================================
-  // 10. OBTENER PEDIDOS POR FECHA
-  // ============================================
-  async getPedidosPorFecha(req, res) {
-    try {
-      const { fecha } = req.query;
-      
-      if (!fecha) {
-        const pedidos = await prisma.pedidos.findMany({
-          where: {
-            fecha_delete: null,
-            fecha_entrega: { not: null }
-          },
-          orderBy: { fecha_entrega: 'asc' },
-          include: {
-            cliente: {
-              select: {
-                id: true,
-                nombre: true,
-                telefono: true,
-                email: true,
-                celular: true
-              }
-            },
-            detalle_pedidos: {
-              include: { producto: true, estado: true }
-            },
-            detalle_pago: {
-              include: { pago: true }
-            }
-          }
-        });
-        
-        const pedidosFormateados = pedidos.map(pedido => {
-          let totalPedido = 0;
-          let totalPagado = 0;
-          
-          pedido.detalle_pedidos.forEach(detalle => {
-            totalPedido += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
-          });
-          
-          pedido.detalle_pago.forEach(detallePago => {
-            totalPagado += decimalToNumber(detallePago.valor);
-          });
-          
-          let estadoGeneral = 'pendiente';
-          if (pedido.detalle_pedidos.length > 0) {
-            const estados = pedido.detalle_pedidos.map(d => d.estado?.descripcion?.toLowerCase());
-            if (estados.every(e => e === 'completado' || e === 'entregado')) estadoGeneral = 'entregado';
-            else if (estados.some(e => e === 'en_proceso')) estadoGeneral = 'en_proceso';
-          }
-          
-          return {
-            id: pedido.id,
-            id_cliente: pedido.id_cliente,
-            fecha_pedido: pedido.fecha_pedido,
-            fecha_entrega: pedido.fecha_entrega,
-            descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
-            cliente: pedido.cliente,
-            administrador: pedido.administrador,
-            detalles: pedido.detalle_pedidos,
-            pagos: pedido.detalle_pago,
-            total: totalPedido,
-            totalPagado: totalPagado,
-            saldoPendiente: totalPedido - totalPagado,
-            estado: estadoGeneral,
-            pacientes: [...new Set(pedido.detalle_pedidos.map(d => d.paciente).filter(Boolean))]
-          };
-        });
-        
-        return res.json({
-          success: true,
-          data: pedidosFormateados,
-          total: pedidosFormateados.length,
-          mensaje: 'Mostrando todos los pedidos con fecha de entrega'
-        });
-      }
-      
-      const fechaInicio = new Date(fecha);
-      fechaInicio.setHours(0, 0, 0, 0);
-      
-      const fechaFin = new Date(fecha);
-      fechaFin.setHours(23, 59, 59, 999);
-      
+// ============================================
+// 10. OBTENER PEDIDOS POR FECHA
+// ============================================
+async getPedidosPorFecha(req, res) {
+  try {
+    const { fecha } = req.query;
+    console.log('📡 getPedidosPorFecha - Con estado');
+    
+    if (!fecha) {
       const pedidos = await prisma.pedidos.findMany({
         where: {
           fecha_delete: null,
-          fecha_entrega: {
-            gte: fechaInicio,
-            lte: fechaFin
+          fecha_entrega: { not: undefined }
+        },
+        take: 50,
+        select: {
+          id: true,
+          fecha_entrega: true,
+          descripcion: true,
+          cliente: {
+            select: {
+              id: true,
+              nombre: true,
+              telefono: true,
+              email: true,
+              celular: true
+            }
+          },
+          detalle_pedidos: {
+            select: {
+              estado: {
+                select: {
+                  id: true,
+                  descripcion: true
+                }
+              }
+            },
+            take: 1
           }
         },
-        include: {
-          cliente: true,
-          detalle_pedidos: { include: { producto: true, estado: true } },
-          detalle_pago: { include: { pago: true } }
-        }
+        orderBy: { fecha_entrega: 'asc' }
       });
       
       const pedidosFormateados = pedidos.map(pedido => {
-        let total = 0;
-        pedido.detalle_pedidos.forEach(detalle => {
-          total += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
-        });
+        // Obtener el estado del primer detalle
+        const estado = pedido.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
+        const estadoId = pedido.detalle_pedidos[0]?.estado?.id || 1;
         
         return {
           id: pedido.id,
           fecha_entrega: pedido.fecha_entrega,
-          descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
+          descripcion: pedido.descripcion,
           cliente: pedido.cliente,
-          total: total,
-          detalles_count: pedido.detalle_pedidos.length
+          estado: estado,
+          estadoId: estadoId
         };
       });
       
-      res.json({
+      return res.json({
         success: true,
         data: pedidosFormateados,
-        fecha: fecha,
         total: pedidosFormateados.length
       });
-      
-    } catch (error) {
-      console.error('❌ ERROR:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Error al obtener pedidos',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
     }
-  },
+    
+    // Si hay fecha específica
+    const fechaInicio = new Date(fecha);
+    fechaInicio.setHours(0, 0, 0, 0);
+    const fechaFin = new Date(fecha);
+    fechaFin.setHours(23, 59, 59, 999);
+    
+    const pedidos = await prisma.pedidos.findMany({
+      where: {
+        fecha_delete: null,
+        fecha_entrega: {
+          gte: fechaInicio,
+          lte: fechaFin
+        }
+      },
+      select: {
+        id: true,
+        fecha_entrega: true,
+        descripcion: true,
+        cliente: {
+          select: {
+            id: true,
+            nombre: true,
+            telefono: true,
+            email: true,
+            celular: true
+          }
+        },
+        detalle_pedidos: {
+          select: {
+            estado: {
+              select: {
+                id: true,
+                descripcion: true
+              }
+            }
+          },
+          take: 1
+        }
+      },
+      orderBy: { fecha_entrega: 'asc' }
+    });
+    
+    const pedidosFormateados = pedidos.map(pedido => {
+      const estado = pedido.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
+      const estadoId = pedido.detalle_pedidos[0]?.estado?.id || 1;
+      
+      return {
+        id: pedido.id,
+        fecha_entrega: pedido.fecha_entrega,
+        descripcion: pedido.descripcion,
+        cliente: pedido.cliente,
+        estado: estado,
+        estadoId: estadoId
+      };
+    });
+    
+    res.json({
+      success: true,
+      data: pedidosFormateados,
+      fecha: fecha,
+      total: pedidosFormateados.length
+    });
+    
+  } catch (error) {
+    console.error('❌ ERROR:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+},
 
   // ============================================
   // 11. OBTENER AGENDA COMPLETA
@@ -969,7 +1055,7 @@ const pedidoController = {
         agenda[fechaKey].push({
           id: pedido.id,
           cliente: pedido.cliente?.nombre || 'Cliente',
-          descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
+          descripcion: pedido.descripcion,
           total: total,
           productos: pedido.detalle_pedidos.length,
           estado: pedido.detalle_pedidos.some(d => d.id_estado !== 4) ? 'pendiente' : 'completado'
@@ -992,7 +1078,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 12. BUSCAR PEDIDOS - VERSIÓN CORREGIDA PARA MYSQL
+  // 12. BUSCAR PEDIDOS
   // ============================================
   async searchPedidos(req, res) {
     try {
@@ -1023,7 +1109,6 @@ const pedidoController = {
                 } 
               } 
             },
-            // ✅ BUSCAR POR DESCRIPCIÓN
             { 
               descripcion: { 
                 contains: term 
@@ -1083,7 +1168,7 @@ const pedidoController = {
           administrador: pedido.administrador,
           fecha_pedido: pedido.fecha_pedido,
           fecha_entrega: pedido.fecha_entrega,
-          descripcion: pedido.descripcion, // ✅ NUEVO CAMPO
+          descripcion: pedido.descripcion,
           detalles: pedido.detalle_pedidos,
           pagos: pedido.detalle_pago,
           total,
@@ -1110,7 +1195,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 13. ACTUALIZAR DESCRIPCIÓN DE PEDIDO (NUEVO)
+  // 13. ACTUALIZAR DESCRIPCIÓN DE PEDIDO
   // ============================================
   async updatePedidoDescripcion(req, res) {
     try {
@@ -1149,107 +1234,112 @@ const pedidoController = {
       });
     }
   },
+  
   // ============================================
-// 14. ACTUALIZAR ESTADO DEL PEDIDO (NUEVO)
-// ============================================
-async updateEstadoPedido(req, res) {
-  try {
-    const { id } = req.params;
-    const { id_estado } = req.body;
-    
-    if (!id_estado) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID de estado es requerido'
+  // 14. ACTUALIZAR ESTADO DEL PEDIDO (TODOS LOS DETALLES)
+  // ============================================
+  async updateEstadoPedido(req, res) {
+    try {
+      const { id } = req.params;
+      const { id_estado } = req.body;
+      
+      if (!id_estado) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID de estado es requerido'
+        });
+      }
+      
+      const estado = await prisma.estado.findUnique({
+        where: { id: parseInt(id_estado) }
       });
-    }
-    
-    // Verificar que el estado existe
-    const estado = await prisma.estado.findUnique({
-      where: { id: parseInt(id_estado) }
-    });
-    
-    if (!estado) {
-      return res.status(404).json({
-        success: false,
-        message: 'Estado no encontrado'
+      
+      if (!estado) {
+        return res.status(404).json({
+          success: false,
+          message: 'Estado no encontrado'
+        });
+      }
+      
+      const pedido = await prisma.pedidos.findUnique({
+        where: { id: parseInt(id) },
+        include: {
+          cliente: true,
+          detalle_pedidos: true
+        }
       });
-    }
-    
-    const pedido = await prisma.pedidos.findUnique({
-      where: { id: parseInt(id) }
-    });
-    
-    if (!pedido || pedido.fecha_delete) {
-      return res.status(404).json({
-        success: false,
-        message: 'Pedido no encontrado'
+      
+      if (!pedido || pedido.fecha_delete) {
+        return res.status(404).json({
+          success: false,
+          message: 'Pedido no encontrado'
+        });
+      }
+      
+      if (pedido.detalle_pedidos.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El pedido no tiene detalles para actualizar estado'
+        });
+      }
+      
+      await prisma.detalle_pedidos.updateMany({
+        where: { id_pedido: parseInt(id) },
+        data: { id_estado: parseInt(id_estado) }
       });
-    }
-    
-    // Aquí actualizamos el estado del pedido
-    // Nota: En tu modelo actual no hay un campo id_estado en pedidos
-    // Por lo que necesitamos actualizar TODOS los detalles del pedido
-    // o agregar un campo estado al pedido. Te recomiendo actualizar los detalles.
-    
-    // Opción A: Actualizar todos los detalles del pedido al mismo estado
-    await prisma.detalle_pedidos.updateMany({
-      where: { id_pedido: parseInt(id) },
-      data: { id_estado: parseInt(id_estado) }
-    });
-    
-    // Opción B: Si prefieres tener un estado general del pedido,
-    // necesitas modificar tu modelo primero. Por ahora usaremos Opción A.
-    
-    // Obtener el pedido actualizado
-    const pedidoActualizado = await prisma.pedidos.findUnique({
-      where: { id: parseInt(id) },
-      include: {
-        cliente: true,
-        detalle_pedidos: {
-          include: {
-            estado: true
+      
+      const pedidoActualizado = await prisma.pedidos.findUnique({
+        where: { id: parseInt(id) },
+        include: {
+          cliente: true,
+          detalle_pedidos: {
+            include: {
+              estado: true,
+              producto: true
+            }
+          },
+          detalle_pago: {
+            include: {
+              pago: true
+            }
           }
-        },
-        detalle_pago: true
-      }
-    });
-    
-    // Calcular totales
-    let total = 0;
-    let totalPagado = 0;
-    
-    pedidoActualizado.detalle_pedidos.forEach(detalle => {
-      total += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
-    });
-    
-    pedidoActualizado.detalle_pago.forEach(pago => {
-      totalPagado += decimalToNumber(pago.valor);
-    });
-    
-    const estadoGeneral = pedidoActualizado.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
-    
-    res.json({
-      success: true,
-      message: 'Estado del pedido actualizado exitosamente',
-      data: {
-        ...pedidoActualizado,
-        total,
-        totalPagado,
-        saldoPendiente: total - totalPagado,
-        estado: estadoGeneral
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error actualizando estado del pedido:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al actualizar estado del pedido',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+        }
+      });
+      
+      let total = 0;
+      let totalPagado = 0;
+      
+      pedidoActualizado.detalle_pedidos.forEach(detalle => {
+        total += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
+      });
+      
+      pedidoActualizado.detalle_pago.forEach(pago => {
+        totalPagado += decimalToNumber(pago.valor);
+      });
+      
+      const estadoGeneral = pedidoActualizado.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
+      
+      res.json({
+        success: true,
+        message: 'Estado del pedido actualizado exitosamente',
+        data: {
+          ...pedidoActualizado,
+          total,
+          totalPagado,
+          saldoPendiente: total - totalPagado,
+          estado: estadoGeneral
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error actualizando estado del pedido:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al actualizar estado del pedido',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
   }
-}
 };
 
 module.exports = pedidoController;

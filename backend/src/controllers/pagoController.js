@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
 
 // Función auxiliar para convertir Decimal a Number
 const decimalToNumber = (decimalValue) => {
@@ -8,7 +7,7 @@ const decimalToNumber = (decimalValue) => {
 };
 
 const pagoController = {
-  // ========== REGISTRAR NUEVO PAGO (Nuevo schema) ==========
+  // ========== REGISTRAR NUEVO PAGO ==========
   async registrarPago(req, res) {
     try {
       const { 
@@ -35,6 +34,21 @@ const pagoController = {
         return res.status(400).json({
           success: false,
           message: 'Debe especificar el pedido (id_pedido)'
+        });
+      }
+      
+      // ✅ Validar id_administrador (ahora NOT NULL)
+      const adminId = id_administrador ? parseInt(id_administrador) : 1; // Por defecto admin 1
+      
+      // Verificar que el administrador existe
+      const adminExiste = await prisma.administrador.findUnique({
+        where: { id: adminId }
+      });
+      
+      if (!adminExiste) {
+        return res.status(400).json({
+          success: false,
+          message: 'Administrador no encontrado'
         });
       }
       
@@ -90,11 +104,11 @@ const pagoController = {
       
       // Crear pago con transacción
       const resultado = await prisma.$transaction(async (tx) => {
-        // 1. Crear pago principal en tabla "pago"
+        // 1. Crear pago principal en tabla "pago" - ✅ id_administrador es NOT NULL
         const pago = await tx.pago.create({
           data: {
             valor: valorNumber,
-            id_administrador: id_administrador ? parseInt(id_administrador) : null
+            id_administrador: adminId  // ✅ Siempre tiene valor
           }
         });
         
@@ -178,7 +192,6 @@ const pagoController = {
       console.error('❌ Error registrando pago:', error.message);
       console.error('❌ Código:', error.code);
       
-      // Errores específicos
       if (error.code === 'P2003') {
         return res.status(404).json({
           success: false,
@@ -201,7 +214,7 @@ const pagoController = {
     }
   },
 
-  // ========== OBTENER PAGOS POR CLIENTE (Nuevo schema) ==========
+  // ========== OBTENER PAGOS POR CLIENTE ==========
   async getPagosByCliente(req, res) {
     try {
       const { clienteId } = req.params;
@@ -330,7 +343,7 @@ const pagoController = {
     }
   },
 
-  // ========== OBTENER PAGOS POR PEDIDO (Nuevo schema) ==========
+  // ========== OBTENER PAGOS POR PEDIDO ==========
   async getPagosByPedido(req, res) {
     try {
       const { pedidoId } = req.params;
@@ -412,7 +425,7 @@ const pagoController = {
     }
   },
 
-  // ========== ELIMINAR PAGO (Nuevo schema) ==========
+  // ========== ELIMINAR PAGO ==========
   async eliminarPago(req, res) {
     try {
       const { id } = req.params; // ID del detalle_pago
@@ -496,12 +509,12 @@ const pagoController = {
     }
   },
 
-  // ========== BALANCE GENERAL (PARA PANTALLA PRINCIPAL) - Nuevo schema ==========
+  // ========== BALANCE GENERAL (PARA PANTALLA PRINCIPAL) ==========
   async getBalanceGeneral(req, res) {
     try {
       const { id_administrador, orderBy = 'nombre', estado = 'todos' } = req.query;
       
-      console.log('💰 Generando balance general (nuevo schema)');
+      console.log('💰 Generando balance general');
       
       // Construir filtros para clientes
       const whereCliente = {};
@@ -515,6 +528,7 @@ const pagoController = {
         orderBy: { [orderBy]: 'asc' },
         include: {
           administrador: true,
+          tipo_cliente: true,  // ✅ Incluir tipo_cliente
           pedidos: {
             where: {
               fecha_delete: null
@@ -543,12 +557,10 @@ const pagoController = {
         
         // Calcular totales de todos los pedidos del cliente
         cliente.pedidos.forEach(pedido => {
-          // Facturación por detalle_pedidos
           pedido.detalle_pedidos.forEach(detalle => {
             totalFacturado += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
           });
           
-          // Pagos por detalle_pago
           pedido.detalle_pago.forEach(detallePago => {
             totalPagado += decimalToNumber(detallePago.valor);
           });
@@ -556,7 +568,6 @@ const pagoController = {
         
         const pendiente = totalFacturado - totalPagado;
         
-        // Determinar estado financiero
         let estadoFinanciero = 'al_dia';
         if (pendiente > 0) {
           if (pendiente === totalFacturado) {
@@ -566,7 +577,6 @@ const pagoController = {
           }
         }
         
-        // Calcular porcentaje pagado
         const porcentajePagado = totalFacturado > 0 ? ((totalPagado / totalFacturado) * 100).toFixed(1) : '0.0';
         
         // Obtener pedidos pendientes
@@ -597,7 +607,7 @@ const pagoController = {
         return {
           id: cliente.id,
           nombreCompleto: cliente.nombre,
-          tipo: 'cliente', // En el nuevo schema no hay tipo odontologo/clinica
+          tipo: cliente.tipo_cliente?.descripcion || 'Odontólogo',
           contacto: {
             telefono: cliente.telefono,
             email: cliente.email,
@@ -613,7 +623,7 @@ const pagoController = {
           },
           pedidosPendientes: {
             total: pedidosPendientes.length,
-            lista: pedidosPendientes.slice(0, 3) // Mostrar solo primeros 3
+            lista: pedidosPendientes.slice(0, 3)
           }
         };
       });
@@ -655,7 +665,7 @@ const pagoController = {
         };
       }
       
-      console.log('✅ Balance generado (nuevo schema):', {
+      console.log('✅ Balance generado:', {
         totalClientes: totales.totalClientes,
         totalPendiente: totales.totalPendiente
       });
@@ -682,7 +692,7 @@ const pagoController = {
     }
   },
 
-  // ========== BALANCE DETALLADO POR CLIENTE (Nuevo schema) ==========
+  // ========== BALANCE DETALLADO POR CLIENTE ==========
   async getBalanceCliente(req, res) {
     try {
       const { clienteId } = req.params;
@@ -694,6 +704,7 @@ const pagoController = {
         where: { id: parseInt(clienteId) },
         include: {
           administrador: true,
+          tipo_cliente: true,  // ✅ Incluir tipo_cliente
           pedidos: {
             where: {
               fecha_delete: null
@@ -728,12 +739,10 @@ const pagoController = {
       let totalPagado = 0;
       
       cliente.pedidos.forEach(pedido => {
-        // Facturación por detalle_pedidos
         pedido.detalle_pedidos.forEach(detalle => {
           totalFacturado += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
         });
         
-        // Pagos por detalle_pago
         pedido.detalle_pago.forEach(detallePago => {
           totalPagado += decimalToNumber(detallePago.valor);
         });
@@ -741,15 +750,10 @@ const pagoController = {
       
       const totalPendiente = totalFacturado - totalPagado;
       
-      // Pagos por método (agrupados de detalle_pago)
-      const pagosPorMetodo = {};
-      cliente.pedidos.forEach(pedido => {
-        pedido.detalle_pago.forEach(detallePago => {
-          // En el nuevo schema no hay método en pago, podemos usar referencia o dejar genérico
-          const metodo = 'pago';
-          pagosPorMetodo[metodo] = (pagosPorMetodo[metodo] || 0) + decimalToNumber(detallePago.valor);
-        });
-      });
+      // Pagos por método (agrupados)
+      const pagosPorMetodo = {
+        'pagos': totalPagado
+      };
       
       // Últimos pagos formateados
       const ultimosPagos = [];
@@ -759,7 +763,7 @@ const pagoController = {
             id: detallePago.id,
             fecha: detallePago.fecha_pago,
             monto: decimalToNumber(detallePago.valor),
-            metodoPago: 'pago', // Genérico en nuevo schema
+            metodoPago: 'pago',
             pagoId: detallePago.id_pago,
             pedido: {
               id: pedido.id
@@ -768,7 +772,6 @@ const pagoController = {
         });
       });
       
-      // Ordenar por fecha y tomar los últimos 10
       ultimosPagos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
       const ultimosPagosLimitados = ultimosPagos.slice(0, 10);
       
@@ -813,6 +816,7 @@ const pagoController = {
           cliente: {
             id: cliente.id,
             nombreCompleto: cliente.nombre,
+            tipo: cliente.tipo_cliente?.descripcion || 'Odontólogo',
             administrador: cliente.administrador,
             contacto: {
               telefono: cliente.telefono,
@@ -842,12 +846,11 @@ const pagoController = {
     }
   },
 
-  // ========== RESUMEN FINANCIERO (Nuevo schema) ==========
+  // ========== RESUMEN FINANCIERO ==========
   async getResumenFinanciero(req, res) {
     try {
       const { fechaInicio, fechaFin } = req.query;
       
-      // Si no se especifican fechas, usar el último mes
       let inicio, fin;
       if (fechaInicio && fechaFin) {
         inicio = new Date(fechaInicio);
@@ -858,7 +861,7 @@ const pagoController = {
         inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, hoy.getDate());
       }
       
-      console.log('📈 Generando resumen financiero (nuevo schema):', { inicio, fin });
+      console.log('📈 Generando resumen financiero:', { inicio, fin });
       
       // Obtener detalles de pago del período
       const detallesPago = await prisma.detalle_pago.findMany({
@@ -908,7 +911,6 @@ const pagoController = {
         }
       });
       
-      // Calcular totales
       const totalRecaudado = detallesPago.reduce((sum, detalle) => 
         sum + decimalToNumber(detalle.valor), 0
       );
@@ -920,14 +922,12 @@ const pagoController = {
         return sum + totalPedido;
       }, 0);
       
-      // Agrupar por día para gráfico
       const pagosPorDia = {};
       detallesPago.forEach(detalle => {
         const fecha = detalle.fecha_pago.toISOString().split('T')[0];
         pagosPorDia[fecha] = (pagosPorDia[fecha] || 0) + decimalToNumber(detalle.valor);
       });
       
-      // Top 10 clientes que más pagaron
       const pagosPorCliente = {};
       detallesPago.forEach(detalle => {
         const clienteId = detalle.pedido.cliente.id;
@@ -945,7 +945,6 @@ const pagoController = {
         .sort((a, b) => b.total - a.total)
         .slice(0, 10);
       
-      // Pedidos completados vs pendientes
       const pedidosCompletados = pedidos.filter(pedido => {
         let totalPedido = 0;
         let totalPagado = 0;

@@ -1,52 +1,53 @@
 // ==============================
-// GENERATOR Y DATASOURCE
+// ENUMS
 // ==============================
-generator client {
-  provider = "prisma-client-js"
+enum TipoCliente {
+  ODONTOLOGO
+  CLINICA_DENTAL
+  OTRO
 }
 
-datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+enum RolUsuario {
+  ADMIN
+  SUPER_ADMIN
 }
 
 // ==============================
-// ADMINISTRADOR - TU TABLA + CAMPOS DE AUTENTICACIÓN
+// ADMINISTRADOR
 // ==============================
 model administrador {
-  id            Int      @id @default(autoincrement())
-  nombre        String   @db.VarChar(100)
-  telefono      String?  @db.VarChar(20)
-  email         String?  @db.VarChar(100)  // Para login
-  usuario       String   @db.VarChar(50) @unique
-  super_usuario Boolean? @default(false)
+  id                       Int      @id @default(autoincrement())
+  nombre                   String   @db.VarChar(100)
+  telefono                 String   @db.VarChar(20)
+  email                    String   @db.VarChar(100) @unique
+  usuario                  String   @db.VarChar(50) @unique
+  super_usuario            Boolean  @default(false)
+  password                 String   @db.Text
+  two_factor_enabled       Boolean  @default(false)
+  two_factor_secret        String?  @db.Text
+  two_factor_backup_codes  Json?    @db.JsonB
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  activo                   Boolean  @default(true)
+  refreshToken             String?  @db.Text
+  resetPasswordToken       String?  @db.Text
+  resetPasswordExpiry      DateTime?
   
-  // 🔐 CAMPOS DE AUTENTICACIÓN (NUEVOS)
-  password               String    @db.VarChar(255)      // Contraseña hasheada
-  rol                    String    @default("ADMIN")     // ADMIN o SUPER_ADMIN
-  reset_password_token   String?   @db.VarChar(255) @unique
-  reset_password_expires DateTime?                         // Expiración del token
-  created_at             DateTime  @default(now())        // Fecha de creación
-  updated_at             DateTime  @updatedAt              // Última actualización
-  last_login             DateTime?                         // Último ingreso
-  login_attempts         Int       @default(0)             // Intentos fallidos
-  locked_until           DateTime?                         // Bloqueo temporal
-
-  // Relaciones (tus relaciones originales)
+  // Relaciones
   clientes      cliente[]
   productos     producto[]
   pedidos       pedidos[]
   pagos         pago[]
-  auditorias    auditoria[]
-  tokens        reset_token[]      // Nueva relación
+  otro_gastos   otro_gasto[] 
 
   @@index([email])
   @@index([usuario])
+  @@index([activo])
   @@map("administrador")
 }
 
 // ==============================
-// TIPO CLIENTE - TU TABLA ORIGINAL
+// TIPO CLIENTE
 // ==============================
 model tipo_cliente {
   id           Int       @id @default(autoincrement())
@@ -60,169 +61,193 @@ model tipo_cliente {
 }
 
 // ==============================
-// CLIENTE - TU TABLA ORIGINAL
+// CLIENTE
 // ==============================
 model cliente {
   id               Int          @id @default(autoincrement())
-  id_tipo          Int?
   nombre           String       @db.VarChar(100)
-  telefono         String?      @db.VarChar(20)
+  telefono         String       @db.VarChar(20)
+  email            String       @db.VarChar(100)
+  id_administrador Int
+  
   celular          String?      @db.VarChar(20)
-  email            String?      @db.VarChar(100)
-  id_administrador Int?
+  id_tipo          Int?
 
-  // Relaciones
-  administrador   administrador? @relation(fields: [id_administrador], references: [id])
-  tipo_cliente    tipo_cliente?  @relation(fields: [id_tipo], references: [id])
+  administrador   administrador  @relation(fields: [id_administrador], references: [id])
+  tipo_cliente    tipo_cliente?  @relation(fields: [id_tipo], references: [id], onDelete: SetNull)
   pedidos         pedidos[]
 
   @@index([id])
+  @@index([id_administrador])
+  @@index([nombre])
+  @@index([telefono])
+  @@index([id_tipo])
+  @@unique([email])
   @@map("cliente")
 }
 
 // ==============================
-// PRODUCTO - TU TABLA ORIGINAL
+// OTRO_GASTO
+// ==============================
+model otro_gasto {
+  id               Int      @id @default(autoincrement())
+  tipo             String   @db.VarChar(20)
+  descripcion      String   @db.Text
+  monto            Decimal  @db.Decimal(10, 2)
+  fecha            DateTime @default(now()) @db.Timestamp
+  id_administrador Int
+
+  administrador    administrador @relation(fields: [id_administrador], references: [id], onDelete: Restrict)
+
+  @@index([id])
+  @@index([tipo])
+  @@index([fecha])
+  @@index([id_administrador])
+  @@map("otro_gasto")
+}
+
+// ==============================
+// PRODUCTO
 // ==============================
 model producto {
   id               Int      @id @default(autoincrement())
-  tipo             String   @db.VarChar(50)
-  valor            Decimal  @db.Decimal(10, 2)
-  id_administrador Int?
+  tipo             String   @db.VarChar(100)
+  id_administrador Int
 
-  administrador    administrador? @relation(fields: [id_administrador], references: [id])
+  administrador    administrador @relation(fields: [id_administrador], references: [id], onDelete: Restrict)
   detalle_pedidos  detalle_pedidos[]
 
   @@index([id])
+  @@index([id_administrador])
+  @@index([tipo])
   @@map("producto")
 }
 
 // ==============================
-// PEDIDOS - TU TABLA ORIGINAL
+// PEDIDOS
 // ==============================
 model pedidos {
   id               Int       @id @default(autoincrement())
   id_cliente       Int
-  fecha_entrega    DateTime? @db.Date
-  fecha_pedido     DateTime  @db.Date
-  fecha_delete     DateTime? @db.Date
-  id_administrador Int?
-  descripcion      String?   @db.VarChar(500)
+  fecha_pedido     DateTime  @default(now()) @db.Timestamp
+  fecha_entrega    DateTime  @db.Timestamp
+  fecha_delete     DateTime? @db.Timestamp
+  id_administrador Int
+  descripcion      String?   @db.Text
 
-  // Relaciones
-  cliente        cliente         @relation(fields: [id_cliente], references: [id])
-  administrador  administrador?  @relation(fields: [id_administrador], references: [id])
+  cliente        cliente         @relation(fields: [id_cliente], references: [id], onDelete: Cascade)
+  administrador  administrador   @relation(fields: [id_administrador], references: [id], onDelete: Restrict)
   detalle_pedidos detalle_pedidos[]
   detalle_pago   detalle_pago[]
 
   @@index([id])
+  @@index([id_cliente])
+  @@index([id_administrador])
+  @@index([fecha_pedido])
+  @@index([fecha_entrega])
+  @@index([fecha_delete])
   @@map("pedidos")
 }
 
 // ==============================
-// ESTADO - TU TABLA ORIGINAL
+// ESTADO
 // ==============================
 model estado {
   id            Int       @id @default(autoincrement())
-  descripcion   String    @db.VarChar(50)
-  fecha_insert  DateTime? @default(now())
-  fecha_delete  DateTime?
+  descripcion   String    @db.VarChar(50) 
+  fecha_insert  DateTime  @default(now()) @db.Timestamp
+  fecha_delete  DateTime? @db.Timestamp
 
   detalle_pedidos detalle_pedidos[]
 
   @@index([id])
+  @@index([fecha_delete])
+  @@unique([descripcion])
   @@map("estado")
 }
 
 // ==============================
-// DETALLE_PEDIDOS - TU TABLA ORIGINAL
+// DETALLE_PEDIDOS
 // ==============================
 model detalle_pedidos {
-  id              Int       @id @default(autoincrement())
+  id              Int      @id @default(autoincrement())
   id_pedido       Int
   id_producto     Int
   cantidad        Int
-  precio_unitario Decimal   @db.Decimal(10, 2)
-  paciente        String?   @db.VarChar(100)
-  id_estado       Int?
+  precio_unitario Decimal  @db.Decimal(10, 2)
+  paciente        String   @db.VarChar(100)
+  id_estado       Int
 
-  // Relaciones
-  pedido    pedidos   @relation(fields: [id_pedido], references: [id])
-  producto  producto  @relation(fields: [id_producto], references: [id])
-  estado    estado?   @relation(fields: [id_estado], references: [id])
+  pedido    pedidos   @relation(fields: [id_pedido], references: [id], onDelete: Cascade)
+  producto  producto  @relation(fields: [id_producto], references: [id], onDelete: Restrict)
+  estado    estado    @relation(fields: [id_estado], references: [id], onDelete: Restrict)
 
   @@index([id])
+  @@index([id_pedido])
+  @@index([id_producto])
+  @@index([id_estado])
   @@map("detalle_pedidos")
 }
 
 // ==============================
-// PAGO - TU TABLA ORIGINAL
+// PAGO
 // ==============================
 model pago {
   id               Int      @id @default(autoincrement())
   valor            Decimal  @db.Decimal(10, 2)
-  id_administrador Int?
+  id_administrador Int
 
-  administrador administrador? @relation(fields: [id_administrador], references: [id])
+  administrador administrador @relation(fields: [id_administrador], references: [id], onDelete: Restrict)
   detalle_pago  detalle_pago[]
 
   @@index([id])
+  @@index([id_administrador])
   @@map("pago")
 }
 
 // ==============================
-// DETALLE_PAGO - TU TABLA ORIGINAL
+// DETALLE_PAGO
 // ==============================
 model detalle_pago {
-  id         Int       @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   id_pago    Int
   id_pedido  Int
-  valor      Decimal   @db.Decimal(10, 2)
-  fecha_pago DateTime  @db.Date
+  valor      Decimal  @db.Decimal(10, 2)
+  fecha_pago DateTime @db.Timestamp
 
-  // Relaciones
-  pago    pago    @relation(fields: [id_pago], references: [id])
-  pedido  pedidos @relation(fields: [id_pedido], references: [id])
+  pago    pago    @relation(fields: [id_pago], references: [id], onDelete: Cascade)
+  pedido  pedidos @relation(fields: [id_pedido], references: [id], onDelete: Cascade)
 
   @@index([id])
+  @@index([id_pago])
+  @@index([id_pedido])
+  @@index([fecha_pago])
   @@map("detalle_pago")
 }
 
 // ==============================
-// AUDITORIA - TU TABLA ORIGINAL + CAMPOS NUEVOS
+// AUDITORIA
 // ==============================
 model auditoria {
-  id                 BigInt    @id @default(autoincrement())
-  id_administrador   Int?                          // 🔐 NUEVO
-  usuario            String    @db.VarChar(50)
-  fecha_accion       DateTime  @default(now())
-  accion             String    @db.VarChar(255)
-  ip_address         String?   @db.VarChar(45)     // 🔐 NUEVO
-  detalles           String?   @db.Text            // 🔐 NUEVO
+  id           Int      @id @default(autoincrement())
+  usuario      String   @db.VarChar(50)
+  fecha_accion DateTime @default(now())
+  accion       String   @db.VarChar(100)
 
-  // Relaciones
-  administrador      administrador? @relation(fields: [id_administrador], references: [id])
 
   @@index([fecha_accion])
+  @@index([usuario])
   @@map("auditoria")
 }
 
 // ==============================
-// RESET TOKEN - NUEVA TABLA PARA RECUPERACIÓN
+// GENERATOR Y DATASOURCE
 // ==============================
-model reset_token {
-  id                 Int       @id @default(autoincrement())
-  id_administrador   Int
-  token              String    @db.VarChar(255) @unique
-  tipo               String    @default("RESET_PASSWORD")
-  expires_at         DateTime
-  used_at            DateTime?
-  created_at         DateTime  @default(now())
-  ip_address         String?   @db.VarChar(45)
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
 
-  // Relaciones
-  administrador      administrador @relation(fields: [id_administrador], references: [id], onDelete: Cascade)
-
-  @@index([token])
-  @@index([expires_at])
-  @@map("reset_token")
+datasource db {
+  provider = "postgresql"
 }

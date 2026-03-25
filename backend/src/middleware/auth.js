@@ -1,6 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
 
 const authMiddleware = async (req, res, next) => {
   try {
@@ -18,13 +17,19 @@ const authMiddleware = async (req, res, next) => {
         id: true,
         nombre: true,
         email: true,
-        rol: true,
-        super_usuario: true
+        super_usuario: true,
+        usuario: true,
+        activo: true
       }
     });
 
     if (!admin) {
       return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Verificar si el usuario está activo
+    if (admin.activo === false) {
+      return res.status(401).json({ error: 'Cuenta desactivada' });
     }
 
     req.admin = admin;
@@ -37,13 +42,16 @@ const authMiddleware = async (req, res, next) => {
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Token expirado' });
     }
+    console.error('Auth middleware error:', error);
     res.status(500).json({ error: 'Error de autenticación' });
   }
 };
 
 const superAdminMiddleware = (req, res, next) => {
   if (!req.admin.super_usuario) {
-    return res.status(403).json({ error: 'Acceso denegado - Se requieren permisos de super administrador' });
+    return res.status(403).json({ 
+      error: 'Acceso denegado - Se requieren permisos de super administrador' 
+    });
   }
   next();
 };

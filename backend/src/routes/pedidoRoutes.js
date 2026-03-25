@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+// Cambia la importación
+// Cambia a la versión original
 const pedidoController = require('../controllers/pedidoController');
 
 // ============================================

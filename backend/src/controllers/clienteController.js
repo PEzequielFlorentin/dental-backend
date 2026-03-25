@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
 
 // Función auxiliar para convertir Decimal a Number
 const decimalToNumber = (decimalValue) => {
@@ -25,12 +24,21 @@ const clienteController = {
   async getClientes(req, res) {
     try {
       const clientes = await prisma.cliente.findMany({
+        include: {
+          tipo_cliente: true  // ✅ Agregar para obtener la descripción
+        },
         orderBy: { nombre: 'asc' }
       });
       
+      const clientesFormateados = clientes.map(cliente => ({
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      }));
+      
       res.json({
         success: true,
-        data: clientes
+        data: clientesFormateados
       });
     } catch (error) {
       console.error('Error obteniendo clientes:', error);
@@ -94,92 +102,110 @@ const clienteController = {
   },
 
   // 2. Crear nuevo cliente
-  async createCliente(req, res) {
-    try {
-      const { 
-        nombre, 
-        telefono, 
-        celular, 
-        email,
-        tipo = 'ODONTOLOGO', // Valor por defecto
-        id_administrador = 1
-      } = req.body;
-      
-      if (!nombre) {
-        return res.status(400).json({
-          success: false,
-          message: 'Nombre es requerido'
-        });
-      }
-      
-      // Convertir tipo string a ID
-      let id_tipo = null;
-      if (tipo && TIPO_TO_ID[tipo]) {
-        id_tipo = TIPO_TO_ID[tipo];
-      } else {
-        id_tipo = 1; // Por defecto Odontólogo
-      }
-      
-      console.log('📝 Creando cliente con:', {
-        nombre,
-        telefono,
-        celular,
-        email,
-        tipo,
-        id_tipo,
-        id_administrador
-      });
-      
-      const cliente = await prisma.cliente.create({
-        data: {
-          nombre,
-          telefono: telefono || null,
-          celular: celular || null,
-          email: email || null,
-          id_tipo: id_tipo,
-          id_administrador: id_administrador ? parseInt(id_administrador) : null
-        },
-        include: {
-          administrador: {
-            select: {
-              id: true,
-              nombre: true,
-              usuario: true
-            }
-          },
-          tipo_cliente: true
-        }
-      });
-      
-      // Devolver con formato amigable para el frontend
-      const clienteFormateado = {
-        ...cliente,
-        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
-        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
-      };
-      
-      res.status(201).json({
-        success: true,
-        message: 'Cliente creado exitosamente',
-        data: clienteFormateado
-      });
-    } catch (error) {
-      console.error('Error creando cliente:', error.message);
-      
-      if (error.code === 'P2002') {
-        return res.status(400).json({
-          success: false,
-          message: 'El email ya está registrado'
-        });
-      }
-      
-      res.status(500).json({
+// 2. Crear nuevo cliente
+async createCliente(req, res) {
+  try {
+    const { 
+      nombre, 
+      telefono, 
+      celular, 
+      email,
+      tipo,           // Si viene como string (ej: 'ODONTOLOGO')
+      id_tipo,        // Si viene como número (ej: 1 o 2)
+      id_administrador = 1
+    } = req.body;
+    
+    if (!nombre) {
+      return res.status(400).json({
         success: false,
-        error: 'Error interno del servidor',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: 'Nombre es requerido'
       });
     }
-  },
+    
+    if (!telefono) {
+      return res.status(400).json({
+        success: false,
+        message: 'Teléfono es requerido'
+      });
+    }
+    
+    // ✅ Convertir a id_tipo (soporta ambos formatos)
+    let tipoFinal = null;
+    
+    // Si viene id_tipo (número)
+    if (id_tipo && (id_tipo === 1 || id_tipo === 2)) {
+      tipoFinal = id_tipo;
+    } 
+    // Si viene tipo (string)
+    else if (tipo && TIPO_TO_ID[tipo]) {
+      tipoFinal = TIPO_TO_ID[tipo];
+    } 
+    // Por defecto Odontólogo (1)
+    else {
+      tipoFinal = 1;
+    }
+    
+    console.log('📝 Creando cliente con:', {
+      nombre,
+      telefono,
+      celular,
+      email,
+      tipo,
+      id_tipo,
+      tipoFinal,
+      id_administrador
+    });
+    
+    const cliente = await prisma.cliente.create({
+      data: {
+        nombre,
+        telefono,
+        celular: celular || null,
+        email: email || null,
+        id_tipo: tipoFinal,  // ✅ Usar el valor convertido
+        id_administrador: parseInt(id_administrador)
+      },
+      include: {
+        administrador: {
+          select: {
+            id: true,
+            nombre: true,
+            usuario: true
+          }
+        },
+        tipo_cliente: true
+      }
+    });
+    
+    // Devolver con formato amigable para el frontend
+    const clienteFormateado = {
+      ...cliente,
+      tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+      tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+    };
+    
+    res.status(201).json({
+      success: true,
+      message: 'Cliente creado exitosamente',
+      data: clienteFormateado
+    });
+  } catch (error) {
+    console.error('Error creando cliente:', error.message);
+    
+    if (error.code === 'P2002') {
+      return res.status(400).json({
+        success: false,
+        message: 'El email ya está registrado'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+},
 
   // 3. Obtener cliente por ID
   async getClienteById(req, res) {
@@ -272,8 +298,8 @@ const clienteController = {
       
       // Convertir tipo string a ID si viene
       if (updateData.tipo) {
-        updateData.id_tipo = TIPO_TO_ID[updateData.tipo] || 1; // Por defecto Odontólogo
-        delete updateData.tipo; // Eliminar el campo tipo original
+        updateData.id_tipo = TIPO_TO_ID[updateData.tipo] || 1;
+        delete updateData.tipo;
       }
       
       console.log('📝 Actualizando cliente:', updateData);
@@ -438,7 +464,6 @@ const clienteController = {
   // 8. Estadísticas por tipo (SOLO 2 TIPOS)
   async getStatsByTipo(req, res) {
     try {
-      // GroupBy por id_tipo
       const groupStats = await prisma.cliente.groupBy({
         by: ['id_tipo'],
         _count: {
@@ -446,13 +471,11 @@ const clienteController = {
         }
       });
 
-      // Formatear resultados usando el mapeo de IDs a strings
       const stats = groupStats.map(item => ({
         tipo: ID_TO_TIPO[item.id_tipo] || 'ODONTOLOGO',
         count: item._count.id
       }));
 
-      // Agregar tipos que no tienen clientes
       const tiposExistentes = ['ODONTOLOGO', 'CLINICA_DENTAL'];
       tiposExistentes.forEach(tipoStr => {
         const existe = stats.find(s => s.tipo === tipoStr);
@@ -592,7 +615,6 @@ const clienteController = {
         }
       });
       
-      // Calcular saldos pendientes
       const clientesConPedidosData = await prisma.cliente.findMany({
         where: {
           pedidos: {
@@ -693,13 +715,13 @@ const clienteController = {
           celular: cliente.celular,
           email: cliente.email,
           tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
-          tipoId: cliente.id_tipo,
+          id_tipo: cliente.id_tipo,
           tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
-          administradorId: cliente.id_administrador,
+          id_administrador: cliente.id_administrador,
           totalPedidos,
           totalGastado,
-          createdAt: cliente.created_at,
-          updatedAt: cliente.updated_at
+          createdAt: cliente.createdAt,
+          updatedAt: cliente.updatedAt
         };
       });
 

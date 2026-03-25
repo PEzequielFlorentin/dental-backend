@@ -1,11 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { PrismaClient } = require('@prisma/client');
 const { validationResult } = require('express-validator');
 const emailService = require('../utils/emailService');
-
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
 
 class AuthController {
   // ============================================
@@ -31,66 +29,36 @@ class AuthController {
         return res.status(401).json({ error: 'Credenciales inválidas' });
       }
 
-      // Verificar bloqueo
-      if (admin.locked_until && admin.locked_until > new Date()) {
-        const waitTime = Math.ceil((admin.locked_until - new Date()) / 60000);
-        return res.status(401).json({ 
-          error: `Cuenta bloqueada. Intenta en ${waitTime} minutos` 
-        });
+      // ✅ Verificar si el usuario está activo
+      if (admin.activo === false) {
+        return res.status(401).json({ error: 'Cuenta desactivada' });
       }
 
       // Verificar contraseña
       const validPassword = await bcrypt.compare(password, admin.password);
       if (!validPassword) {
-        // Incrementar intentos fallidos
-        const newAttempts = (admin.login_attempts || 0) + 1;
-        let lockedUntil = null;
-
-        if (newAttempts >= 5) {
-          lockedUntil = new Date(Date.now() + 30 * 60000); // 30 minutos
-        }
-
-        await prisma.administrador.update({
-          where: { id: admin.id },
-          data: {
-            login_attempts: newAttempts,
-            locked_until: lockedUntil
-          }
-        });
-
         return res.status(401).json({ error: 'Credenciales inválidas' });
       }
 
-      // Login exitoso - resetear intentos
-      await prisma.administrador.update({
-        where: { id: admin.id },
-        data: {
-          last_login: new Date(),
-          login_attempts: 0,
-          locked_until: null
-        }
-      });
+      // ✅ Eliminado: actualizar last_login (campo no existe en la BD de la compañía)
 
       // Generar token JWT
       const token = jwt.sign(
         { 
           id: admin.id, 
           email: admin.email, 
-          rol: admin.rol,
-          nombre: admin.nombre 
+          nombre: admin.nombre,
+          super_usuario: admin.super_usuario
         },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
       );
 
-      // Registrar auditoría
+      // Registrar auditoría - ✅ SIN detalles
       await prisma.auditoria.create({
         data: {
-          id_administrador: admin.id,
           usuario: admin.usuario,
-          accion: 'LOGIN',
-          ip_address: ipAddress,
-          detalles: 'Inicio de sesión exitoso'
+          accion: 'LOGIN'
         }
       });
 
@@ -102,7 +70,7 @@ class AuthController {
           id: admin.id,
           nombre: admin.nombre,
           email: admin.email,
-          rol: admin.rol
+          super_usuario: admin.super_usuario
         }
       });
 
@@ -131,7 +99,6 @@ class AuthController {
         where: { email }
       });
 
-      // ✅ VERIFICAR SI EL EMAIL EXISTE
       if (!admin) {
         console.log('❌ Email no encontrado en BD:', email);
         return res.status(404).json({ 
@@ -184,7 +151,6 @@ class AuthController {
       } catch (emailError) {
         console.error('❌ Error enviando email:', emailError);
         
-        // Si falla el email, igual devolvemos éxito pero registramos el error
         res.json({ 
           success: true,
           message: 'Código generado (falló el envío de email, contacta al administrador)' 
@@ -239,7 +205,6 @@ class AuthController {
 
       console.log('✅ Código válido para:', email);
 
-      // Código válido - devolver token para el siguiente paso
       res.json({ 
         success: true, 
         token: resetToken.token,
@@ -293,10 +258,8 @@ class AuthController {
         where: { id: resetToken.id_administrador },
         data: {
           password: hashedPassword,
-          reset_password_token: null,
-          reset_password_expires: null,
-          login_attempts: 0,
-          locked_until: null
+          resetPasswordToken: null,
+          resetPasswordExpiry: null
         }
       });
 
@@ -312,7 +275,7 @@ class AuthController {
 
       console.log('✅ Contraseña actualizada para:', resetToken.administrador.email);
 
-      // Enviar email de confirmación (opcional, no bloquear si falla)
+      // Enviar email de confirmación
       try {
         await emailService.sendPasswordChangedEmail(resetToken.administrador.email);
         console.log('✅ Email de confirmación enviado');
@@ -320,14 +283,11 @@ class AuthController {
         console.error('❌ Error enviando email de confirmación:', emailError);
       }
 
-      // Registrar auditoría
+      // Registrar auditoría - ✅ SIN detalles
       await prisma.auditoria.create({
         data: {
-          id_administrador: resetToken.id_administrador,
           usuario: resetToken.administrador.usuario,
-          accion: 'PASSWORD_RESET',
-          ip_address: ipAddress,
-          detalles: 'Contraseña restablecida con código de verificación'
+          accion: 'PASSWORD_RESET'
         }
       });
 
@@ -373,13 +333,11 @@ class AuthController {
 
       console.log('✅ Contraseña cambiada exitosamente');
 
+      // Registrar auditoría - ✅ SIN detalles
       await prisma.auditoria.create({
         data: {
-          id_administrador: req.admin.id,
           usuario: admin.usuario,
-          accion: 'PASSWORD_CHANGE',
-          ip_address: ipAddress,
-          detalles: 'Contraseña cambiada voluntariamente'
+          accion: 'PASSWORD_CHANGE'
         }
       });
 
@@ -405,13 +363,11 @@ class AuthController {
     try {
       const ipAddress = req.ip || req.connection.remoteAddress;
 
+      // Registrar auditoría - ✅ SIN detalles
       await prisma.auditoria.create({
         data: {
-          id_administrador: req.admin.id,
           usuario: req.admin.usuario,
-          accion: 'LOGOUT',
-          ip_address: ipAddress,
-          detalles: 'Cierre de sesión'
+          accion: 'LOGOUT'
         }
       });
 
