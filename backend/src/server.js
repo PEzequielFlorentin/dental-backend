@@ -1,4 +1,5 @@
-﻿const express = require('express');
+﻿// backend/src/server.js
+const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 require('dotenv').config();
@@ -9,9 +10,10 @@ const pedidoRoutes = require('./routes/pedidoRoutes');
 const pagoRoutes = require('./routes/pagoRoutes');
 const estadoRoutes = require('./routes/estadoRoutes');
 const productoRoutes = require('./routes/productoRoutes');
-
-// ✅ Importar rutas de autenticación
 const authRoutes = require('./routes/authRoutes');
+
+// ✅ IMPORTAR RUTAS DE OTROS GASTOS
+const otroGastoRoutes = require('./routes/otroGastoRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // ✅ AÑADIDO - Para formularios
+app.use(express.urlencoded({ extended: true }));
 
 // ========== RUTAS ==========
 app.use('/api/auth', authRoutes);
@@ -30,6 +32,8 @@ app.use('/api/pagos', pagoRoutes);
 app.use('/api/estados', estadoRoutes);
 app.use('/api/productos', productoRoutes);
 
+// ✅ AGREGAR RUTAS DE OTROS GASTOS
+app.use('/api/otros-gastos', otroGastoRoutes);
 // ========== RUTAS BÁSICAS ==========
 
 // Página principal
@@ -115,6 +119,16 @@ app.get('/', (req, res) => {
           delete: 'DELETE /api/productos/:id',
           search: 'GET /api/productos/search/:term'
         }
+      },
+      otrosGastos: {
+        base: '/api/otros-gastos',
+        endpoints: {
+          list: 'GET /api/otros-gastos',
+          statistics: 'GET /api/otros-gastos/estadisticas',
+          create: 'POST /api/otros-gastos',
+          update: 'PUT /api/otros-gastos/:id',
+          delete: 'DELETE /api/otros-gastos/:id'
+        }
       }
     }
   });
@@ -136,7 +150,8 @@ app.get('/api/health', (req, res) => {
       '/api/pedidos', 
       '/api/pagos',
       '/api/estados',
-      '/api/productos'
+      '/api/productos',
+      '/api/otros-gastos'
     ]
   });
 });
@@ -156,6 +171,7 @@ app.use((req, res, next) => {
       pagos: '/api/pagos',
       estados: '/api/estados',
       productos: '/api/productos',
+      otrosGastos: '/api/otros-gastos',
       health: '/api/health'
     }
   });
@@ -268,6 +284,13 @@ const server = app.listen(PORT, () => {
   console.log('   • PUT    /api/productos/:id      - Actualizar producto');
   console.log('   • DELETE /api/productos/:id      - Eliminar producto');
   console.log('   • GET    /api/productos/search/:term - Buscar productos');
+  
+  console.log('💸 ENDPOINTS OTROS GASTOS:');
+  console.log('   • GET    /api/otros-gastos            - Listar todos los gastos');
+  console.log('   • GET    /api/otros-gastos/estadisticas - Estadísticas de gastos');
+  console.log('   • POST   /api/otros-gastos            - Registrar nuevo gasto');
+  console.log('   • PUT    /api/otros-gastos/:id        - Actualizar gasto');
+  console.log('   • DELETE /api/otros-gastos/:id        - Eliminar gasto');
   
   console.log('='.repeat(70));
   console.log('🔧 Utilidades:');
