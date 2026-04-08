@@ -12,7 +12,7 @@ const pedidoController = {
   // ============================================
   async getAllPedidos(req, res) {
     try {
-      const { page = 1, limit = 20, clienteId, estadoId } = req.query;
+      const { page = 1, limit = 999999, clienteId, estadoId } = req.query;
       const skip = (page - 1) * limit;
       
       const where = {
