@@ -40,7 +40,8 @@
     "express-validator": "^7.3.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-    "nodemailer": "^8.0.1",
-    "pg": "^8.20.0"
+    "nodemailer": "^8.0.5",
+    "pg": "^8.20.0",
+    "resend": "^6.10.0"
   }
 }
