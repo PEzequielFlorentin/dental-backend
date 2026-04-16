@@ -3,7 +3,13 @@ const { body } = require('express-validator');
 const loginValidator = [
   body('email')
     .isEmail().withMessage('Email inválido')
-    .normalizeEmail(),
+    .normalizeEmail({ 
+      gmail_remove_dots: false,      // ✅ NO eliminar puntos en Gmail
+      gmail_remove_subaddress: false, // ✅ NO eliminar +etiquetas
+      outlook_remove_subaddress: false,
+      yahoo_remove_subaddress: false,
+      icloud_remove_subaddress: false
+    }),
   body('password')
     .notEmpty().withMessage('La contraseña es requerida')
 ];
@@ -11,7 +17,10 @@ const loginValidator = [
 const resetPasswordRequestValidator = [
   body('email')
     .isEmail().withMessage('Email inválido')
-    .normalizeEmail()
+    .normalizeEmail({ 
+      gmail_remove_dots: false,      // ✅ NO eliminar puntos
+      gmail_remove_subaddress: false 
+    })
 ];
 
 const resetPasswordValidator = [
