@@ -7,7 +7,7 @@ const { authMiddleware } = require('../middleware/auth'); // ✅ IMPORTAR MIDDLE
 // ============================================
 // 🟢 1. RUTAS ESPECÍFICAS (SIN PARÁMETROS) - PRIMERO
 // ============================================
-router.get('/health', clienteController.healthCheck); // Opcional: pública
+router.get('/health', authMiddleware, clienteController.healthCheck); // ✅ AGREGADO authMiddleware
 router.get('/stats/tipo', authMiddleware, clienteController.getStatsByTipo); // ✅
 router.get('/con-balance', authMiddleware, clienteController.getClientesConBalance); // ✅
 router.get('/con-totales', authMiddleware, clienteController.getClientesConTotales); // ✅

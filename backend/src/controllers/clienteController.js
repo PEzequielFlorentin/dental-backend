@@ -106,7 +106,6 @@ const clienteController = {
     }
   },
 
-  // 2. Crear nuevo cliente - ASIGNA AUTOMÁTICAMENTE EL ADMIN LOGUEADO
   async createCliente(req, res) {
     try {
       const { 
@@ -114,8 +113,7 @@ const clienteController = {
         telefono, 
         celular, 
         email,
-        tipo,           // Si viene como string (ej: 'ODONTOLOGO')
-        id_tipo,        // Si viene como número (ej: 1 o 2)
+        tipo,
       } = req.body;
       
       if (!nombre) {
@@ -132,63 +130,41 @@ const clienteController = {
         });
       }
       
-      // ✅ Convertir a id_tipo (soporta ambos formatos)
-      let tipoFinal = null;
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email es requerido'
+        });
+      }
       
-      // Si viene id_tipo (número)
-      if (id_tipo && (id_tipo === 1 || id_tipo === 2)) {
-        tipoFinal = id_tipo;
-      } 
-      // Si viene tipo (string)
-      else if (tipo && TIPO_TO_ID[tipo]) {
-        tipoFinal = TIPO_TO_ID[tipo];
-      } 
-      // Por defecto Odontólogo (1)
-      else {
-        tipoFinal = 1;
+      // Determinar tipo (1 = Odontólogo, 2 = Clínica Dental)
+      let tipoId = 1; // Odontólogo por defecto
+      if (tipo === 'CLINICA_DENTAL') {
+        tipoId = 2;
       }
       
       console.log('📝 Creando cliente para admin:', req.admin.id, req.admin.nombre);
-      console.log('📝 Datos:', {
-        nombre,
-        telefono,
-        celular,
-        email,
-        tipoFinal
-      });
+      console.log('📝 Datos:', { nombre, telefono, celular, email, tipoId });
       
       const cliente = await prisma.cliente.create({
         data: {
           nombre,
           telefono,
           celular: celular || null,
-          email: email || null,
-          id_tipo: tipoFinal,
-          id_administrador: req.admin.id  // ✅ ASIGNA EL ADMIN LOGUEADO
-        },
-        include: {
-          administrador: {
-            select: {
-              id: true,
-              nombre: true,
-              usuario: true
-            }
+          email: email,
+          tipo_cliente: {           // ✅ usar relación tipo_cliente
+            connect: { id: tipoId }
           },
-          tipo_cliente: true
+          administrador: {          // ✅ usar relación administrador
+            connect: { id: req.admin.id }
+          }
         }
       });
-      
-      // Devolver con formato amigable para el frontend
-      const clienteFormateado = {
-        ...cliente,
-        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
-        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
-      };
       
       res.status(201).json({
         success: true,
         message: 'Cliente creado exitosamente',
-        data: clienteFormateado
+        data: cliente
       });
     } catch (error) {
       console.error('Error creando cliente:', error.message);
