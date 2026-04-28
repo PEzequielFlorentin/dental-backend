@@ -8,7 +8,7 @@ const decimalToNumber = (decimalValue) => {
 
 const pedidoController = {
   // ============================================
-  // 1. OBTENER TODOS LOS PEDIDOS
+  // 1. OBTENER TODOS LOS PEDIDOS (FILTRADO POR ADMIN)
   // ============================================
   async getAllPedidos(req, res) {
     try {
@@ -16,7 +16,10 @@ const pedidoController = {
       const skip = (page - 1) * limit;
       
       const where = {
-        fecha_delete: null
+        fecha_delete: null,
+        cliente: {
+          id_administrador: req.admin.id  // ✅ FILTRO: solo pedidos de clientes de este admin
+        }
       };
       
       if (clienteId) where.id_cliente = parseInt(clienteId);
@@ -126,7 +129,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 2. OBTENER PEDIDO POR ID
+  // 2. OBTENER PEDIDO POR ID (CON VERIFICACIÓN DE ADMIN)
   // ============================================
   async getPedidoById(req, res) {
     try {
@@ -139,10 +142,16 @@ const pedidoController = {
         });
       }
       
-      console.log(`🔍 Buscando pedido ID: ${id}`);
+      console.log(`🔍 Buscando pedido ID: ${id} para admin: ${req.admin.id}`);
 
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) },
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id  // ✅ VERIFICA que el cliente pertenece al admin
+          }
+        },
         include: {
           cliente: {
             select: {
@@ -176,10 +185,10 @@ const pedidoController = {
         }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado o eliminado'
+          message: 'Pedido no encontrado o no tienes permisos para verlo'
         });
       }
       
@@ -216,13 +225,12 @@ const pedidoController = {
   },
 
   // ============================================
-  // 3. CREAR NUEVO PEDIDO (CON DESCRIPCIÓN)
+  // 3. CREAR NUEVO PEDIDO (CON VERIFICACIÓN DE ADMIN)
   // ============================================
   async createPedido(req, res) {
     try {
       const {
         id_cliente,
-        id_administrador = 1,
         fecha_entrega,
         descripcion,
         detalles,
@@ -230,6 +238,7 @@ const pedidoController = {
       } = req.body;
       
       console.log('📝 Datos recibidos para pedido:', req.body);
+      console.log('📝 Admin logueado:', req.admin.id);
       
       if (!id_cliente || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
         return res.status(400).json({
@@ -238,27 +247,23 @@ const pedidoController = {
         });
       }
       
-      const cliente = await prisma.cliente.findUnique({
-        where: { id: parseInt(id_cliente) }
+      // ✅ Verificar que el cliente pertenece al admin logueado
+      const cliente = await prisma.cliente.findFirst({
+        where: { 
+          id: parseInt(id_cliente),
+          id_administrador: req.admin.id  // ✅ FILTRO
+        }
       });
       
       if (!cliente) {
         return res.status(404).json({
           success: false,
-          message: 'Cliente no encontrado'
+          message: 'Cliente no encontrado o no tienes permisos para crear pedidos para este cliente'
         });
       }
       
-      const adminExiste = await prisma.administrador.findUnique({
-        where: { id: parseInt(id_administrador) }
-      });
-      
-      if (!adminExiste) {
-        return res.status(404).json({
-          success: false,
-          message: 'Administrador no encontrado'
-        });
-      }
+      // ✅ Usar el admin logueado
+      const adminId = req.admin.id;
       
       for (const detalle of detalles) {
         const producto = await prisma.producto.findUnique({
@@ -289,7 +294,7 @@ const pedidoController = {
         const pedido = await prisma.pedidos.create({
           data: {
             id_cliente: parseInt(id_cliente),
-            id_administrador: parseInt(id_administrador),
+            id_administrador: adminId,  // ✅ Asigna el admin logueado
             fecha_pedido: new Date(),
             fecha_entrega: fecha_entrega ? new Date(fecha_entrega) : null,
             descripcion: descripcion || null,
@@ -325,7 +330,7 @@ const pedidoController = {
           const pagoPrincipal = await prisma.pago.create({
             data: {
               valor: pagos.reduce((sum, p) => sum + parseFloat(p.valor), 0),
-              id_administrador: parseInt(id_administrador)
+              id_administrador: adminId  // ✅ Asigna el admin logueado
             }
           });
           
@@ -393,7 +398,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 4. AGREGAR DETALLE A PEDIDO
+  // 4. AGREGAR DETALLE A PEDIDO (CON VERIFICACIÓN)
   // ============================================
   async agregarDetallePedido(req, res) {
     try {
@@ -407,14 +412,21 @@ const pedidoController = {
         });
       }
       
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) }
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       
@@ -472,7 +484,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 5. ACTUALIZAR ESTADO DE UN DETALLE
+  // 5. ACTUALIZAR ESTADO DE UN DETALLE (CON VERIFICACIÓN)
   // ============================================
   async updateEstadoDetalle(req, res) {
     try {
@@ -483,6 +495,23 @@ const pedidoController = {
         return res.status(400).json({
           success: false,
           message: 'ID de estado es requerido'
+        });
+      }
+      
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(pedidoId),
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        }
+      });
+      
+      if (!pedido) {
+        return res.status(404).json({
+          success: false,
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       
@@ -540,12 +569,12 @@ const pedidoController = {
   },
 
   // ============================================
-  // 6. AGREGAR PAGO A PEDIDO
+  // 6. AGREGAR PAGO A PEDIDO (CON VERIFICACIÓN)
   // ============================================
   async agregarPago(req, res) {
     try {
       const { id } = req.params;
-      const { valor, fecha_pago, id_administrador = 1 } = req.body;
+      const { valor, fecha_pago } = req.body;
       
       if (!valor || parseFloat(valor) <= 0) {
         return res.status(400).json({
@@ -554,29 +583,25 @@ const pedidoController = {
         });
       }
       
-      const adminExiste = await prisma.administrador.findUnique({
-        where: { id: parseInt(id_administrador) }
-      });
-      
-      if (!adminExiste) {
-        return res.status(404).json({
-          success: false,
-          message: 'Administrador no encontrado'
-        });
-      }
-      
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) },
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        },
         include: {
           detalle_pedidos: true,
           detalle_pago: true
         }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       
@@ -604,7 +629,7 @@ const pedidoController = {
         const pago = await prisma.pago.create({
           data: {
             valor: valorNumber,
-            id_administrador: parseInt(id_administrador)
+            id_administrador: req.admin.id  // ✅ Asigna el admin logueado
           }
         });
         
@@ -644,20 +669,26 @@ const pedidoController = {
   },
 
   // ============================================
-  // 7. ELIMINAR PEDIDO (SOFT DELETE)
+  // 7. ELIMINAR PEDIDO (SOFT DELETE CON VERIFICACIÓN)
   // ============================================
   async deletePedido(req, res) {
     try {
       const { id } = req.params;
       
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) }
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        }
       });
       
       if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos para eliminarlo'
         });
       }
       
@@ -681,12 +712,27 @@ const pedidoController = {
   },
 
   // ============================================
-  // 8. OBTENER PEDIDOS POR CLIENTE
+  // 8. OBTENER PEDIDOS POR CLIENTE (CON VERIFICACIÓN)
   // ============================================
   async getPedidosByCliente(req, res) {
     try {
       const { clienteId } = req.params;
       const { withDetails = false } = req.query;
+      
+      // ✅ Verificar que el cliente pertenece al admin
+      const cliente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(clienteId),
+          id_administrador: req.admin.id
+        }
+      });
+      
+      if (!cliente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado o no tienes permisos'
+        });
+      }
       
       const includeDetails = withDetails === 'true' || withDetails === true;
       
@@ -755,18 +801,26 @@ const pedidoController = {
   },
 
   // ============================================
-  // 9. OBTENER ESTADÍSTICAS
+  // 9. OBTENER ESTADÍSTICAS (FILTRADO POR ADMIN)
   // ============================================
   async getEstadisticas(req, res) {
     try {
       const totalPedidos = await prisma.pedidos.count({
-        where: { fecha_delete: null }
+        where: { 
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id  // ✅ FILTRO
+          }
+        }
       });
       
       const detalles = await prisma.detalle_pedidos.findMany({
         where: {
           pedido: {
-            fecha_delete: null
+            fecha_delete: null,
+            cliente: {
+              id_administrador: req.admin.id  // ✅ FILTRO
+            }
           }
         },
         select: {
@@ -782,7 +836,10 @@ const pedidoController = {
       const pagos = await prisma.detalle_pago.findMany({
         where: {
           pedido: {
-            fecha_delete: null
+            fecha_delete: null,
+            cliente: {
+              id_administrador: req.admin.id  // ✅ FILTRO
+            }
           }
         },
         select: {
@@ -796,6 +853,7 @@ const pedidoController = {
       
       const clientesConPedidos = await prisma.cliente.count({
         where: {
+          id_administrador: req.admin.id,  // ✅ FILTRO
           pedidos: {
             some: {
               fecha_delete: null
@@ -809,7 +867,10 @@ const pedidoController = {
           detalle_pedidos: {
             where: {
               pedido: {
-                fecha_delete: null
+                fecha_delete: null,
+                cliente: {
+                  id_administrador: req.admin.id  // ✅ FILTRO
+                }
               }
             }
           }
@@ -842,21 +903,89 @@ const pedidoController = {
     }
   },
 
-// ============================================
-// 10. OBTENER PEDIDOS POR FECHA
-// ============================================
-async getPedidosPorFecha(req, res) {
-  try {
-    const { fecha } = req.query;
-    console.log('📡 getPedidosPorFecha - Con estado');
-    
-    if (!fecha) {
+  // ============================================
+  // 10. OBTENER PEDIDOS POR FECHA (FILTRADO POR ADMIN)
+  // ============================================
+  async getPedidosPorFecha(req, res) {
+    try {
+      const { fecha } = req.query;
+      console.log('📡 getPedidosPorFecha - Con estado');
+      
+      if (!fecha) {
+        const pedidos = await prisma.pedidos.findMany({
+          where: {
+            fecha_delete: null,
+            fecha_entrega: { not: undefined },
+            cliente: {
+              id_administrador: req.admin.id  // ✅ FILTRO
+            }
+          },
+          take: 50,
+          select: {
+            id: true,
+            fecha_entrega: true,
+            descripcion: true,
+            cliente: {
+              select: {
+                id: true,
+                nombre: true,
+                telefono: true,
+                email: true,
+                celular: true
+              }
+            },
+            detalle_pedidos: {
+              select: {
+                estado: {
+                  select: {
+                    id: true,
+                    descripcion: true
+                  }
+                }
+              },
+              take: 1
+            }
+          },
+          orderBy: { fecha_entrega: 'asc' }
+        });
+        
+        const pedidosFormateados = pedidos.map(pedido => {
+          const estado = pedido.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
+          const estadoId = pedido.detalle_pedidos[0]?.estado?.id || 1;
+          
+          return {
+            id: pedido.id,
+            fecha_entrega: pedido.fecha_entrega,
+            descripcion: pedido.descripcion,
+            cliente: pedido.cliente,
+            estado: estado,
+            estadoId: estadoId
+          };
+        });
+        
+        return res.json({
+          success: true,
+          data: pedidosFormateados,
+          total: pedidosFormateados.length
+        });
+      }
+      
+      const fechaInicio = new Date(fecha);
+      fechaInicio.setHours(0, 0, 0, 0);
+      const fechaFin = new Date(fecha);
+      fechaFin.setHours(23, 59, 59, 999);
+      
       const pedidos = await prisma.pedidos.findMany({
         where: {
           fecha_delete: null,
-          fecha_entrega: { not: undefined }
+          fecha_entrega: {
+            gte: fechaInicio,
+            lte: fechaFin
+          },
+          cliente: {
+            id_administrador: req.admin.id  // ✅ FILTRO
+          }
         },
-        take: 50,
         select: {
           id: true,
           fecha_entrega: true,
@@ -886,7 +1015,6 @@ async getPedidosPorFecha(req, res) {
       });
       
       const pedidosFormateados = pedidos.map(pedido => {
-        // Obtener el estado del primer detalle
         const estado = pedido.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
         const estadoId = pedido.detalle_pedidos[0]?.estado?.id || 1;
         
@@ -900,87 +1028,24 @@ async getPedidosPorFecha(req, res) {
         };
       });
       
-      return res.json({
+      res.json({
         success: true,
         data: pedidosFormateados,
+        fecha: fecha,
         total: pedidosFormateados.length
       });
-    }
-    
-    // Si hay fecha específica
-    const fechaInicio = new Date(fecha);
-    fechaInicio.setHours(0, 0, 0, 0);
-    const fechaFin = new Date(fecha);
-    fechaFin.setHours(23, 59, 59, 999);
-    
-    const pedidos = await prisma.pedidos.findMany({
-      where: {
-        fecha_delete: null,
-        fecha_entrega: {
-          gte: fechaInicio,
-          lte: fechaFin
-        }
-      },
-      select: {
-        id: true,
-        fecha_entrega: true,
-        descripcion: true,
-        cliente: {
-          select: {
-            id: true,
-            nombre: true,
-            telefono: true,
-            email: true,
-            celular: true
-          }
-        },
-        detalle_pedidos: {
-          select: {
-            estado: {
-              select: {
-                id: true,
-                descripcion: true
-              }
-            }
-          },
-          take: 1
-        }
-      },
-      orderBy: { fecha_entrega: 'asc' }
-    });
-    
-    const pedidosFormateados = pedidos.map(pedido => {
-      const estado = pedido.detalle_pedidos[0]?.estado?.descripcion || 'pendiente';
-      const estadoId = pedido.detalle_pedidos[0]?.estado?.id || 1;
       
-      return {
-        id: pedido.id,
-        fecha_entrega: pedido.fecha_entrega,
-        descripcion: pedido.descripcion,
-        cliente: pedido.cliente,
-        estado: estado,
-        estadoId: estadoId
-      };
-    });
-    
-    res.json({
-      success: true,
-      data: pedidosFormateados,
-      fecha: fecha,
-      total: pedidosFormateados.length
-    });
-    
-  } catch (error) {
-    console.error('❌ ERROR:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-},
+    } catch (error) {
+      console.error('❌ ERROR:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  },
 
   // ============================================
-  // 11. OBTENER AGENDA COMPLETA
+  // 11. OBTENER AGENDA COMPLETA (FILTRADO POR ADMIN)
   // ============================================
   async getAgenda(req, res) {
     try {
@@ -988,7 +1053,10 @@ async getPedidosPorFecha(req, res) {
       
       let whereClause = {
         fecha_delete: null,
-        fecha_entrega: { not: null }
+        fecha_entrega: { not: null },
+        cliente: {
+          id_administrador: req.admin.id  // ✅ FILTRO
+        }
       };
       
       if (fecha_inicio && fecha_fin) {
@@ -1078,7 +1146,7 @@ async getPedidosPorFecha(req, res) {
   },
 
   // ============================================
-  // 12. BUSCAR PEDIDOS
+  // 12. BUSCAR PEDIDOS (FILTRADO POR ADMIN)
   // ============================================
   async searchPedidos(req, res) {
     try {
@@ -1091,11 +1159,14 @@ async getPedidosPorFecha(req, res) {
         });
       }
 
-      console.log(`🔍 Buscando pedidos con término: "${term}"`);
+      console.log(`🔍 Buscando pedidos con término: "${term}" para admin: ${req.admin.id}`);
       
       const pedidos = await prisma.pedidos.findMany({
         where: {
           fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id  // ✅ FILTRO
+          },
           OR: [
             ...(!isNaN(parseInt(term)) ? [{ id: parseInt(term) }] : []),
             { cliente: { nombre: { contains: term } } },
@@ -1195,21 +1266,28 @@ async getPedidosPorFecha(req, res) {
   },
 
   // ============================================
-  // 13. ACTUALIZAR DESCRIPCIÓN DE PEDIDO
+  // 13. ACTUALIZAR DESCRIPCIÓN DE PEDIDO (CON VERIFICACIÓN)
   // ============================================
   async updatePedidoDescripcion(req, res) {
     try {
       const { id } = req.params;
       const { descripcion } = req.body;
       
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) }
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       
@@ -1236,7 +1314,7 @@ async getPedidosPorFecha(req, res) {
   },
   
   // ============================================
-  // 14. ACTUALIZAR ESTADO DEL PEDIDO (TODOS LOS DETALLES)
+  // 14. ACTUALIZAR ESTADO DEL PEDIDO (CON VERIFICACIÓN)
   // ============================================
   async updateEstadoPedido(req, res) {
     try {
@@ -1261,18 +1339,25 @@ async getPedidosPorFecha(req, res) {
         });
       }
       
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id) },
+      // ✅ Verificar que el pedido pertenece a un cliente del admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        },
         include: {
           cliente: true,
           detalle_pedidos: true
         }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       

@@ -2,12 +2,13 @@
 const express = require('express');
 const router = express.Router();
 const otroGastoController = require('../controllers/otroGastoController');
+const { authMiddleware } = require('../middleware/auth'); // ✅ IMPORTAR MIDDLEWARE
 
-// Rutas principales (igual que estadoRoutes)
-router.get('/', otroGastoController.getAllOtrosGastos);
-router.get('/estadisticas', otroGastoController.getEstadisticasOtrosGastos);
-router.post('/', otroGastoController.createOtroGasto);
-router.put('/:id', otroGastoController.updateOtroGasto);
-router.delete('/:id', otroGastoController.deleteOtroGasto);
+// ✅ TODAS las rutas necesitan autenticación
+router.get('/', authMiddleware, otroGastoController.getAllOtrosGastos);
+router.get('/estadisticas', authMiddleware, otroGastoController.getEstadisticasOtrosGastos);
+router.post('/', authMiddleware, otroGastoController.createOtroGasto);
+router.put('/:id', authMiddleware, otroGastoController.updateOtroGasto);
+router.delete('/:id', authMiddleware, otroGastoController.deleteOtroGasto);
 
 module.exports = router;

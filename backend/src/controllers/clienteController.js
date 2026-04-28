@@ -20,10 +20,13 @@ const ID_TO_TIPO = {
 const clienteController = {
   // ========== FUNCIONES BÁSICAS ==========
   
-  // 0. Obtener todos los clientes (SIN PARÁMETROS)
+  // 0. Obtener todos los clientes (SIN PARÁMETROS) - FILTRADO POR ADMIN
   async getClientes(req, res) {
     try {
       const clientes = await prisma.cliente.findMany({
+        where: { 
+          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+        },
         include: {
           tipo_cliente: true  // ✅ Agregar para obtener la descripción
         },
@@ -49,12 +52,14 @@ const clienteController = {
     }
   },
 
-  // 1. Obtener todos los clientes (con filtros)
+  // 1. Obtener todos los clientes (con filtros) - FILTRADO POR ADMIN
   async getAllClientes(req, res) {
     try {
       const { tipo, withAdmin = false } = req.query;
       
-      const whereClause = {};
+      const whereClause = {
+        id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+      };
       
       // Convertir tipo string a ID si viene como string
       if (tipo && tipo !== 'TODOS') {
@@ -101,113 +106,109 @@ const clienteController = {
     }
   },
 
-  // 2. Crear nuevo cliente
-// 2. Crear nuevo cliente
-async createCliente(req, res) {
-  try {
-    const { 
-      nombre, 
-      telefono, 
-      celular, 
-      email,
-      tipo,           // Si viene como string (ej: 'ODONTOLOGO')
-      id_tipo,        // Si viene como número (ej: 1 o 2)
-      id_administrador = 1
-    } = req.body;
-    
-    if (!nombre) {
-      return res.status(400).json({
-        success: false,
-        message: 'Nombre es requerido'
-      });
-    }
-    
-    if (!telefono) {
-      return res.status(400).json({
-        success: false,
-        message: 'Teléfono es requerido'
-      });
-    }
-    
-    // ✅ Convertir a id_tipo (soporta ambos formatos)
-    let tipoFinal = null;
-    
-    // Si viene id_tipo (número)
-    if (id_tipo && (id_tipo === 1 || id_tipo === 2)) {
-      tipoFinal = id_tipo;
-    } 
-    // Si viene tipo (string)
-    else if (tipo && TIPO_TO_ID[tipo]) {
-      tipoFinal = TIPO_TO_ID[tipo];
-    } 
-    // Por defecto Odontólogo (1)
-    else {
-      tipoFinal = 1;
-    }
-    
-    console.log('📝 Creando cliente con:', {
-      nombre,
-      telefono,
-      celular,
-      email,
-      tipo,
-      id_tipo,
-      tipoFinal,
-      id_administrador
-    });
-    
-    const cliente = await prisma.cliente.create({
-      data: {
+  // 2. Crear nuevo cliente - ASIGNA AUTOMÁTICAMENTE EL ADMIN LOGUEADO
+  async createCliente(req, res) {
+    try {
+      const { 
+        nombre, 
+        telefono, 
+        celular, 
+        email,
+        tipo,           // Si viene como string (ej: 'ODONTOLOGO')
+        id_tipo,        // Si viene como número (ej: 1 o 2)
+      } = req.body;
+      
+      if (!nombre) {
+        return res.status(400).json({
+          success: false,
+          message: 'Nombre es requerido'
+        });
+      }
+      
+      if (!telefono) {
+        return res.status(400).json({
+          success: false,
+          message: 'Teléfono es requerido'
+        });
+      }
+      
+      // ✅ Convertir a id_tipo (soporta ambos formatos)
+      let tipoFinal = null;
+      
+      // Si viene id_tipo (número)
+      if (id_tipo && (id_tipo === 1 || id_tipo === 2)) {
+        tipoFinal = id_tipo;
+      } 
+      // Si viene tipo (string)
+      else if (tipo && TIPO_TO_ID[tipo]) {
+        tipoFinal = TIPO_TO_ID[tipo];
+      } 
+      // Por defecto Odontólogo (1)
+      else {
+        tipoFinal = 1;
+      }
+      
+      console.log('📝 Creando cliente para admin:', req.admin.id, req.admin.nombre);
+      console.log('📝 Datos:', {
         nombre,
         telefono,
-        celular: celular || null,
-        email: email || null,
-        id_tipo: tipoFinal,  // ✅ Usar el valor convertido
-        id_administrador: parseInt(id_administrador)
-      },
-      include: {
-        administrador: {
-          select: {
-            id: true,
-            nombre: true,
-            usuario: true
-          }
+        celular,
+        email,
+        tipoFinal
+      });
+      
+      const cliente = await prisma.cliente.create({
+        data: {
+          nombre,
+          telefono,
+          celular: celular || null,
+          email: email || null,
+          id_tipo: tipoFinal,
+          id_administrador: req.admin.id  // ✅ ASIGNA EL ADMIN LOGUEADO
         },
-        tipo_cliente: true
+        include: {
+          administrador: {
+            select: {
+              id: true,
+              nombre: true,
+              usuario: true
+            }
+          },
+          tipo_cliente: true
+        }
+      });
+      
+      // Devolver con formato amigable para el frontend
+      const clienteFormateado = {
+        ...cliente,
+        tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+      };
+      
+      res.status(201).json({
+        success: true,
+        message: 'Cliente creado exitosamente',
+        data: clienteFormateado
+      });
+    } catch (error) {
+      console.error('Error creando cliente:', error.message);
+      
+      if (error.code === 'P2002') {
+        return res.status(400).json({
+          success: false,
+          message: 'El email ya está registrado'
+        });
       }
-    });
-    
-    // Devolver con formato amigable para el frontend
-    const clienteFormateado = {
-      ...cliente,
-      tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
-      tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
-    };
-    
-    res.status(201).json({
-      success: true,
-      message: 'Cliente creado exitosamente',
-      data: clienteFormateado
-    });
-  } catch (error) {
-    console.error('Error creando cliente:', error.message);
-    
-    if (error.code === 'P2002') {
-      return res.status(400).json({
+      
+      res.status(500).json({
         success: false,
-        message: 'El email ya está registrado'
+        error: 'Error interno del servidor',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-    
-    res.status(500).json({
-      success: false,
-      error: 'Error interno del servidor',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-},
+  },
 
-  // 3. Obtener cliente por ID
+  // 3. Obtener cliente por ID - VERIFICA QUE SEA DE ESTE ADMIN
   async getClienteById(req, res) {
     try {
       const { id } = req.params;
@@ -221,8 +222,11 @@ async createCliente(req, res) {
       
       const { withPedidos = false, withAdmin = false } = req.query;
       
-      const cliente = await prisma.cliente.findUnique({
-        where: { id: parseInt(id) },
+      const cliente = await prisma.cliente.findFirst({
+        where: { 
+          id: parseInt(id),
+          id_administrador: req.admin.id  // ✅ VERIFICA que sea de este admin
+        },
         include: {
           administrador: withAdmin === 'true' ? {
             select: {
@@ -254,7 +258,7 @@ async createCliente(req, res) {
       if (!cliente) {
         return res.status(404).json({
           success: false,
-          message: 'Cliente no encontrado'
+          message: 'Cliente no encontrado o no tienes permisos para verlo'
         });
       }
       
@@ -278,7 +282,7 @@ async createCliente(req, res) {
     }
   },
 
-  // 4. Actualizar cliente
+  // 4. Actualizar cliente - VERIFICA QUE SEA DE ESTE ADMIN
   async updateCliente(req, res) {
     try {
       const { id } = req.params;
@@ -290,11 +294,25 @@ async createCliente(req, res) {
         });
       }
       
+      // ✅ Primero verificar que el cliente pertenece a este admin
+      const clienteExistente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(id),
+          id_administrador: req.admin.id
+        }
+      });
+      
+      if (!clienteExistente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado o no tienes permisos para modificarlo'
+        });
+      }
+      
       const updateData = req.body;
       
-      if (updateData.id_administrador) {
-        updateData.id_administrador = parseInt(updateData.id_administrador);
-      }
+      // No permitir cambiar el id_administrador
+      delete updateData.id_administrador;
       
       // Convertir tipo string a ID si viene
       if (updateData.tipo) {
@@ -347,7 +365,7 @@ async createCliente(req, res) {
     }
   },
 
-  // 5. Eliminar cliente
+  // 5. Eliminar cliente - VERIFICA QUE SEA DE ESTE ADMIN
   async deleteCliente(req, res) {
     try {
       const { id } = req.params;
@@ -356,6 +374,21 @@ async createCliente(req, res) {
         return res.status(400).json({
           success: false,
           message: 'ID de cliente inválido'
+        });
+      }
+      
+      // ✅ Primero verificar que el cliente pertenece a este admin
+      const clienteExistente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(id),
+          id_administrador: req.admin.id
+        }
+      });
+      
+      if (!clienteExistente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado o no tienes permisos para eliminarlo'
         });
       }
       
@@ -384,7 +417,7 @@ async createCliente(req, res) {
     }
   },
 
-  // 6. Buscar clientes
+  // 6. Buscar clientes - FILTRADO POR ADMIN
   async searchClientes(req, res) {
     try {
       const { term } = req.query;
@@ -398,6 +431,7 @@ async createCliente(req, res) {
       
       const clientes = await prisma.cliente.findMany({
         where: {
+          id_administrador: req.admin.id,  // ✅ FILTRO: solo clientes de este admin
           OR: [
             { nombre: { contains: term } },
             { email: { contains: term } },
@@ -441,7 +475,9 @@ async createCliente(req, res) {
   async healthCheck(req, res) {
     try {
       await prisma.$queryRaw`SELECT 1`;
-      const totalClientes = await prisma.cliente.count();
+      const totalClientes = await prisma.cliente.count({
+        where: { id_administrador: req.admin.id }  // ✅ Solo de este admin
+      });
       
       res.json({
         success: true,
@@ -461,11 +497,14 @@ async createCliente(req, res) {
     }
   },
 
-  // 8. Estadísticas por tipo (SOLO 2 TIPOS)
+  // 8. Estadísticas por tipo (SOLO 2 TIPOS) - FILTRADO POR ADMIN
   async getStatsByTipo(req, res) {
     try {
       const groupStats = await prisma.cliente.groupBy({
         by: ['id_tipo'],
+        where: {
+          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+        },
         _count: {
           id: true
         }
@@ -514,10 +553,13 @@ async createCliente(req, res) {
     }
   },
 
-  // 9. Clientes con balance
+  // 9. Clientes con balance - FILTRADO POR ADMIN
   async getClientesConBalance(req, res) {
     try {
       const clientes = await prisma.cliente.findMany({
+        where: {
+          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+        },
         include: {
           administrador: {
             select: {
@@ -600,13 +642,16 @@ async createCliente(req, res) {
     }
   },
 
-  // 10. Estadísticas generales
+  // 10. Estadísticas generales - FILTRADO POR ADMIN
   async getEstadisticas(req, res) {
     try {
-      const totalClientes = await prisma.cliente.count();
+      const totalClientes = await prisma.cliente.count({
+        where: { id_administrador: req.admin.id }  // ✅ Solo de este admin
+      });
       
       const clientesConPedidos = await prisma.cliente.count({
-        where: {
+        where: { 
+          id_administrador: req.admin.id,  // ✅ Solo de este admin
           pedidos: {
             some: {
               fecha_delete: null
@@ -617,6 +662,7 @@ async createCliente(req, res) {
       
       const clientesConPedidosData = await prisma.cliente.findMany({
         where: {
+          id_administrador: req.admin.id,  // ✅ Solo de este admin
           pedidos: {
             some: {
               fecha_delete: null
@@ -680,12 +726,15 @@ async createCliente(req, res) {
     }
   },
 
-  // 11. CLIENTES CON TOTALES
+  // 11. CLIENTES CON TOTALES - FILTRADO POR ADMIN
   async getClientesConTotales(req, res) {
     try {
-      console.log('📊 Obteniendo clientes con totales...');
+      console.log('📊 Obteniendo clientes con totales para admin:', req.admin.id);
       
       const clientes = await prisma.cliente.findMany({
+        where: {
+          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+        },
         include: {
           pedidos: {
             where: {

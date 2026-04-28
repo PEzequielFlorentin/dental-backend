@@ -13,13 +13,13 @@ const pagoController = {
       const { 
         id_pedido, 
         valor, 
-        id_administrador, 
         fecha_pago = new Date(),
         referencia,
         descripcion 
       } = req.body;
       
-      console.log('💰 Registrando pago:', { id_pedido, valor });
+      console.log('💰 Registrando pago para admin:', req.admin.id);
+      console.log('💰 Datos:', { id_pedido, valor });
       
       // Validaciones básicas
       const valorNumber = parseFloat(valor);
@@ -37,29 +37,24 @@ const pagoController = {
         });
       }
       
-      // ✅ Validar id_administrador (ahora NOT NULL)
-      const adminId = id_administrador ? parseInt(id_administrador) : 1; // Por defecto admin 1
+      // ✅ Usar el admin logueado, no el que viene del body
+      const adminId = req.admin.id;
       
-      // Verificar que el administrador existe
-      const adminExiste = await prisma.administrador.findUnique({
-        where: { id: adminId }
-      });
-      
-      if (!adminExiste) {
-        return res.status(400).json({
-          success: false,
-          message: 'Administrador no encontrado'
-        });
-      }
-      
-      // Verificar que el pedido existe
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(id_pedido) },
+      // Verificar que el pedido existe Y pertenece a un cliente de este admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id_pedido),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: adminId  // ✅ Verifica que el cliente pertenece al admin
+          }
+        },
         include: {
           cliente: {
             select: {
               id: true,
-              nombre: true
+              nombre: true,
+              id_administrador: true
             }
           },
           detalle_pedidos: {
@@ -75,10 +70,10 @@ const pagoController = {
         }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado o eliminado'
+          message: 'Pedido no encontrado o no tienes permisos para registrar pagos en este pedido'
         });
       }
       
@@ -104,11 +99,11 @@ const pagoController = {
       
       // Crear pago con transacción
       const resultado = await prisma.$transaction(async (tx) => {
-        // 1. Crear pago principal en tabla "pago" - ✅ id_administrador es NOT NULL
+        // 1. Crear pago principal en tabla "pago"
         const pago = await tx.pago.create({
           data: {
             valor: valorNumber,
-            id_administrador: adminId  // ✅ Siempre tiene valor
+            id_administrador: adminId  // ✅ Asigna el admin logueado
           }
         });
         
@@ -195,7 +190,7 @@ const pagoController = {
       if (error.code === 'P2003') {
         return res.status(404).json({
           success: false,
-          message: 'Pedido o administrador no encontrado'
+          message: 'Pedido no encontrado'
         });
       }
       
@@ -220,6 +215,21 @@ const pagoController = {
       const { clienteId } = req.params;
       const { page = 1, limit = 20, fechaInicio, fechaFin } = req.query;
       const skip = (parseInt(page) - 1) * parseInt(limit);
+      
+      // ✅ Verificar que el cliente pertenece al admin logueado
+      const cliente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(clienteId),
+          id_administrador: req.admin.id
+        }
+      });
+      
+      if (!cliente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado o no tienes permisos'
+        });
+      }
       
       // Construir where para pedidos del cliente
       const wherePedidos = { 
@@ -348,9 +358,15 @@ const pagoController = {
     try {
       const { pedidoId } = req.params;
       
-      // Obtener pedido con detalles y pagos
-      const pedido = await prisma.pedidos.findUnique({
-        where: { id: parseInt(pedidoId) },
+      // ✅ Verificar que el pedido pertenece a un cliente del admin logueado
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(pedidoId),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id  // ✅ Filtro por admin
+          }
+        },
         include: {
           detalle_pedidos: {
             include: {
@@ -368,10 +384,10 @@ const pagoController = {
         }
       });
       
-      if (!pedido || pedido.fecha_delete) {
+      if (!pedido) {
         return res.status(404).json({
           success: false,
-          message: 'Pedido no encontrado'
+          message: 'Pedido no encontrado o no tienes permisos'
         });
       }
       
@@ -433,8 +449,16 @@ const pagoController = {
       console.log('🗑️ Eliminando detalle de pago ID:', id);
       
       // 1. Obtener detalle_pago con datos relacionados
-      const detallePago = await prisma.detalle_pago.findUnique({
-        where: { id: parseInt(id) },
+      // ✅ Verificar que el pago pertenece a un pedido de un cliente del admin
+      const detallePago = await prisma.detalle_pago.findFirst({
+        where: { 
+          id: parseInt(id),
+          pedido: {
+            cliente: {
+              id_administrador: req.admin.id  // ✅ Filtro por admin
+            }
+          }
+        },
         include: {
           pago: true,
           pedido: {
@@ -448,7 +472,7 @@ const pagoController = {
       if (!detallePago) {
         return res.status(404).json({
           success: false,
-          message: 'Pago no encontrado'
+          message: 'Pago no encontrado o no tienes permisos para eliminarlo'
         });
       }
       
@@ -512,23 +536,22 @@ const pagoController = {
   // ========== BALANCE GENERAL (PARA PANTALLA PRINCIPAL) ==========
   async getBalanceGeneral(req, res) {
     try {
-      const { id_administrador, orderBy = 'nombre', estado = 'todos' } = req.query;
+      const { orderBy = 'nombre', estado = 'todos' } = req.query;
       
-      console.log('💰 Generando balance general');
+      console.log('💰 Generando balance general para admin:', req.admin.id);
       
-      // Construir filtros para clientes
-      const whereCliente = {};
-      if (id_administrador) {
-        whereCliente.id_administrador = parseInt(id_administrador);
-      }
+      // ✅ Filtrar clientes SOLO del admin logueado
+      const whereCliente = {
+        id_administrador: req.admin.id  // ✅ Filtro por admin
+      };
       
-      // Obtener todos los clientes
+      // Obtener todos los clientes del admin
       const clientes = await prisma.cliente.findMany({
         where: whereCliente,
         orderBy: { [orderBy]: 'asc' },
         include: {
           administrador: true,
-          tipo_cliente: true,  // ✅ Incluir tipo_cliente
+          tipo_cliente: true,
           pedidos: {
             where: {
               fecha_delete: null
@@ -699,12 +722,15 @@ const pagoController = {
       
       console.log('📊 Obteniendo balance para cliente ID:', clienteId);
       
-      // Obtener cliente con todos sus datos
-      const cliente = await prisma.cliente.findUnique({
-        where: { id: parseInt(clienteId) },
+      // ✅ Verificar que el cliente pertenece al admin logueado
+      const cliente = await prisma.cliente.findFirst({
+        where: { 
+          id: parseInt(clienteId),
+          id_administrador: req.admin.id  // ✅ Filtro por admin
+        },
         include: {
           administrador: true,
-          tipo_cliente: true,  // ✅ Incluir tipo_cliente
+          tipo_cliente: true,
           pedidos: {
             where: {
               fecha_delete: null
@@ -730,7 +756,7 @@ const pagoController = {
       if (!cliente) {
         return res.status(404).json({
           success: false,
-          message: 'Cliente no encontrado'
+          message: 'Cliente no encontrado o no tienes permisos'
         });
       }
       
@@ -861,14 +887,20 @@ const pagoController = {
         inicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, hoy.getDate());
       }
       
-      console.log('📈 Generando resumen financiero:', { inicio, fin });
+      console.log('📈 Generando resumen financiero para admin:', req.admin.id);
+      console.log('📈 Período:', { inicio, fin });
       
-      // Obtener detalles de pago del período
+      // ✅ Filtrar pagos SOLO de pedidos de clientes del admin logueado
       const detallesPago = await prisma.detalle_pago.findMany({
         where: {
           fecha_pago: {
             gte: inicio,
             lte: fin
+          },
+          pedido: {
+            cliente: {
+              id_administrador: req.admin.id  // ✅ Filtro por admin
+            }
           }
         },
         include: {
@@ -887,14 +919,17 @@ const pagoController = {
         orderBy: { fecha_pago: 'desc' }
       });
       
-      // Obtener pedidos del período
+      // ✅ Filtrar pedidos SOLO de clientes del admin logueado
       const pedidos = await prisma.pedidos.findMany({
         where: {
           fecha_pedido: {
             gte: inicio,
             lte: fin
           },
-          fecha_delete: null
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id  // ✅ Filtro por admin
+          }
         },
         include: {
           cliente: true,
