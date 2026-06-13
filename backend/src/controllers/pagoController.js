@@ -54,7 +54,8 @@ const pagoController = {
             select: {
               id: true,
               nombre: true,
-              id_administrador: true
+              id_administrador: true,
+              saldo_a_favor: true  // ✅ NUEVO: incluir saldo a favor
             }
           },
           detalle_pedidos: {
@@ -637,6 +638,7 @@ const pagoController = {
             celular: cliente.celular
           },
           administrador: cliente.administrador,
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),  // ✅ NUEVO
           finanzas: {
             total: totalFacturado,
             pagado: totalPagado,
@@ -666,16 +668,18 @@ const pagoController = {
           acc.totalPagado += cliente.finanzas.pagado;
           acc.totalPendiente += cliente.finanzas.pendiente;
           acc.totalClientes += 1;
+          acc.totalSaldoAFavor += cliente.saldo_a_favor;  // ✅ NUEVO
           return acc;
         },
-        { totalGeneral: 0, totalPagado: 0, totalPendiente: 0, totalClientes: 0 }
+        { totalGeneral: 0, totalPagado: 0, totalPendiente: 0, totalClientes: 0, totalSaldoAFavor: 0 }
       );
       
       // Estadísticas
       const estadisticas = {
         clientesConDeuda: clientesFiltrados.filter(c => c.finanzas.pendiente > 0).length,
         clientesAlDia: clientesFiltrados.filter(c => c.finanzas.pendiente === 0).length,
-        promedioDeuda: totales.totalPendiente / (clientesFiltrados.length || 1)
+        promedioDeuda: totales.totalPendiente / (clientesFiltrados.length || 1),
+        totalSaldoAFavor: totales.totalSaldoAFavor  // ✅ NUEVO
       };
       
       // Buscar mayor deudor
@@ -690,7 +694,8 @@ const pagoController = {
       
       console.log('✅ Balance generado:', {
         totalClientes: totales.totalClientes,
-        totalPendiente: totales.totalPendiente
+        totalPendiente: totales.totalPendiente,
+        totalSaldoAFavor: totales.totalSaldoAFavor
       });
       
       res.json({
@@ -848,7 +853,8 @@ const pagoController = {
               telefono: cliente.telefono,
               celular: cliente.celular,
               email: cliente.email
-            }
+            },
+            saldo_a_favor: decimalToNumber(cliente.saldo_a_favor)  // ✅ NUEVO
           },
           resumen: {
             totalPedidos: cliente.pedidos.length,
@@ -970,7 +976,8 @@ const pagoController = {
           pagosPorCliente[clienteId] = {
             id: clienteId,
             nombre: detalle.pedido.cliente.nombre,
-            total: 0
+            total: 0,
+            saldo_a_favor: decimalToNumber(detalle.pedido.cliente.saldo_a_favor)  // ✅ NUEVO
           };
         }
         pagosPorCliente[clienteId].total += decimalToNumber(detalle.valor);
@@ -1059,6 +1066,276 @@ const pagoController = {
       res.status(500).json({
         success: false,
         error: 'Error al obtener resumen financiero'
+      });
+    }
+  },
+
+  // ========== NUEVA FUNCIÓN: REGISTRAR PAGO CON SALDO A FAVOR ==========
+  async registrarPagoConSaldo(req, res) {
+    try {
+      const { id_pedido, monto_a_usar } = req.body;
+      
+      console.log('💰 Registrando pago con saldo a favor para admin:', req.admin.id);
+      console.log('💰 Datos:', { id_pedido, monto_a_usar });
+      
+      // Validaciones básicas
+      if (!id_pedido) {
+        return res.status(400).json({
+          success: false,
+          message: 'Debe especificar el pedido (id_pedido)'
+        });
+      }
+      
+      const montoUsar = parseFloat(monto_a_usar);
+      if (!montoUsar || montoUsar <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El monto a usar debe ser mayor a 0'
+        });
+      }
+      
+      const adminId = req.admin.id;
+      
+      // Verificar que el pedido existe Y pertenece a un cliente de este admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(id_pedido),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: adminId
+          }
+        },
+        include: {
+          cliente: true,
+          detalle_pedidos: true,
+          detalle_pago: true
+        }
+      });
+      
+      if (!pedido) {
+        return res.status(404).json({
+          success: false,
+          message: 'Pedido no encontrado o no tienes permisos para registrar pagos en este pedido'
+        });
+      }
+      
+      // Calcular total del pedido y total pagado
+      let totalPedido = 0;
+      pedido.detalle_pedidos.forEach(detalle => {
+        totalPedido += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
+      });
+      
+      let totalPagadoAnterior = 0;
+      pedido.detalle_pago.forEach(detallePago => {
+        totalPagadoAnterior += decimalToNumber(detallePago.valor);
+      });
+      
+      const saldoPendiente = totalPedido - totalPagadoAnterior;
+      
+      // Verificar que el monto no exceda el saldo pendiente
+      if (montoUsar > saldoPendiente) {
+        return res.status(400).json({
+          success: false,
+          message: `El valor excede el saldo pendiente del pedido ($${saldoPendiente.toFixed(2)})`
+        });
+      }
+      
+      // Verificar saldo a favor del cliente
+      const saldoCliente = decimalToNumber(pedido.cliente.saldo_a_favor);
+      if (montoUsar > saldoCliente) {
+        return res.status(400).json({
+          success: false,
+          message: `El cliente no tiene suficiente saldo a favor. Saldo disponible: $${saldoCliente.toFixed(2)}`
+        });
+      }
+      
+      // Crear pago con transacción
+      const resultado = await prisma.$transaction(async (tx) => {
+        // 1. Descontar saldo del cliente
+        const nuevoSaldo = saldoCliente - montoUsar;
+        
+        await tx.cliente.update({
+          where: { id: pedido.id_cliente },
+          data: { saldo_a_favor: nuevoSaldo }
+        });
+        
+        // 2. Registrar movimiento de saldo
+        await tx.movimiento_saldo.create({
+          data: {
+            id_cliente: pedido.id_cliente,
+            tipo: 'DESCUENTO',
+            monto: montoUsar,
+            saldo_anterior: saldoCliente,
+            saldo_posterior: nuevoSaldo,
+            descripcion: `Pago del pedido #${pedido.id} con saldo a favor`,
+            id_pedido: pedido.id,
+            id_administrador: adminId
+          }
+        });
+        
+        // 3. Crear pago principal
+        const pago = await tx.pago.create({
+          data: {
+            valor: montoUsar,
+            id_administrador: adminId
+          }
+        });
+        
+        // 4. Crear detalle del pago
+        const detallePago = await tx.detalle_pago.create({
+          data: {
+            id_pago: pago.id,
+            id_pedido: pedido.id,
+            valor: montoUsar,
+            fecha_pago: new Date()
+          },
+          include: {
+            pago: true,
+            pedido: {
+              include: {
+                cliente: true
+              }
+            }
+          }
+        });
+        
+        return {
+          pago,
+          detallePago,
+          saldoRestante: nuevoSaldo,
+          saldoUsado: montoUsar
+        };
+      });
+      
+      // Obtener el pedido actualizado
+      const pedidoActualizado = await prisma.pedidos.findUnique({
+        where: { id: parseInt(id_pedido) },
+        include: {
+          cliente: true,
+          detalle_pago: {
+            include: {
+              pago: true
+            }
+          },
+          detalle_pedidos: {
+            include: {
+              producto: true
+            }
+          }
+        }
+      });
+      
+      // Calcular nuevo balance
+      let nuevoTotalPedido = 0;
+      pedidoActualizado.detalle_pedidos.forEach(detalle => {
+        nuevoTotalPedido += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
+      });
+      
+      let nuevoTotalPagado = 0;
+      pedidoActualizado.detalle_pago.forEach(detallePago => {
+        nuevoTotalPagado += decimalToNumber(detallePago.valor);
+      });
+      
+      const nuevoSaldoPendiente = nuevoTotalPedido - nuevoTotalPagado;
+      
+      res.status(201).json({
+        success: true,
+        message: `Pago de $${montoUsar.toFixed(2)} registrado exitosamente usando saldo a favor`,
+        data: {
+          pago: resultado.pago,
+          detallePago: resultado.detallePago,
+          saldo_cliente_restante: resultado.saldoRestante,
+          pedido: {
+            id: pedidoActualizado.id,
+            cliente: pedidoActualizado.cliente,
+            total: nuevoTotalPedido,
+            totalPagado: nuevoTotalPagado,
+            saldoPendiente: nuevoSaldoPendiente,
+            porcentajePagado: nuevoTotalPedido > 0 ? ((nuevoTotalPagado / nuevoTotalPedido) * 100).toFixed(2) : '0.00'
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error registrando pago con saldo:', error.message);
+      console.error('❌ Código:', error.code);
+      
+      res.status(500).json({
+        success: false,
+        error: 'Error al registrar pago con saldo a favor',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // ========== NUEVA FUNCIÓN: OBTENER SALDO A FAVOR DEL CLIENTE PARA UN PEDIDO ==========
+  async getSaldoDisponibleParaPago(req, res) {
+    try {
+      const { pedidoId } = req.params;
+      
+      console.log('💰 Obteniendo saldo disponible para pago del pedido:', pedidoId);
+      
+      // Verificar que el pedido existe Y pertenece a un cliente de este admin
+      const pedido = await prisma.pedidos.findFirst({
+        where: { 
+          id: parseInt(pedidoId),
+          fecha_delete: null,
+          cliente: {
+            id_administrador: req.admin.id
+          }
+        },
+        include: {
+          cliente: true,
+          detalle_pedidos: true,
+          detalle_pago: true
+        }
+      });
+      
+      if (!pedido) {
+        return res.status(404).json({
+          success: false,
+          message: 'Pedido no encontrado o no tienes permisos'
+        });
+      }
+      
+      // Calcular total del pedido y lo pagado hasta ahora
+      let totalPedido = 0;
+      pedido.detalle_pedidos.forEach(detalle => {
+        totalPedido += decimalToNumber(detalle.precio_unitario) * detalle.cantidad;
+      });
+      
+      let totalPagadoActual = 0;
+      pedido.detalle_pago.forEach(detallePago => {
+        totalPagadoActual += decimalToNumber(detallePago.valor);
+      });
+      
+      const saldoPendiente = totalPedido - totalPagadoActual;
+      const saldoAFavor = decimalToNumber(pedido.cliente.saldo_a_favor);
+      
+      res.json({
+        success: true,
+        data: {
+          pedido: {
+            id: pedido.id,
+            total: totalPedido,
+            pagado: totalPagadoActual,
+            saldo_pendiente: saldoPendiente
+          },
+          cliente: {
+            id: pedido.cliente.id,
+            nombre: pedido.cliente.nombre,
+            saldo_a_favor: saldoAFavor
+          },
+          puede_usar_saldo: saldoAFavor > 0 && saldoPendiente > 0,
+          maximo_a_usar: Math.min(saldoAFavor, saldoPendiente)
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error obteniendo saldo disponible:', error.message);
+      res.status(500).json({
+        success: false,
+        error: 'Error al obtener saldo disponible'
       });
     }
   }

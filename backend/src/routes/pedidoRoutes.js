@@ -13,6 +13,16 @@ router.get('/agenda', authMiddleware, pedidoController.getAgenda);
 router.get('/buscar', authMiddleware, pedidoController.searchPedidos);
 
 // ============================================
+// 🟢 NUEVAS RUTAS PARA PAGOS CON SALDO A FAVOR
+// ============================================
+// Obtener opciones de pago disponibles (incluye saldo a favor)
+router.get('/:id/opciones-pago', authMiddleware, pedidoController.getOpcionesPago);
+// Pagar pedido usando saldo a favor
+router.post('/:id/pagar-con-saldo', authMiddleware, pedidoController.pagarConSaldoAFavor);
+// Registrar pago mixto (saldo a favor + efectivo/transferencia)
+router.post('/:id/pago-mixto', authMiddleware, pedidoController.registrarPagoMixto);
+
+// ============================================
 // 🟡 RUTAS CON PARÁMETROS ESPECÍFICOS
 // ============================================
 router.get('/cliente/:clienteId', authMiddleware, pedidoController.getPedidosByCliente);

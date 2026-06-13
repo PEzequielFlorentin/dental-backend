@@ -1,4 +1,4 @@
-const prisma = require('../config/prisma'); // ✅ Importar desde archivo central
+const prisma = require('../config/prisma');
 
 // Función auxiliar para convertir Decimal a Number
 const decimalToNumber = (decimalValue) => {
@@ -25,16 +25,17 @@ const clienteController = {
     try {
       const clientes = await prisma.cliente.findMany({
         where: { 
-          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+          id_administrador: req.admin.id
         },
         include: {
-          tipo_cliente: true  // ✅ Agregar para obtener la descripción
+          tipo_cliente: true
         },
         orderBy: { nombre: 'asc' }
       });
       
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -58,15 +59,13 @@ const clienteController = {
       const { tipo, withAdmin = false } = req.query;
       
       const whereClause = {
-        id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+        id_administrador: req.admin.id
       };
       
-      // Convertir tipo string a ID si viene como string
       if (tipo && tipo !== 'TODOS') {
         if (TIPO_TO_ID[tipo]) {
           whereClause.id_tipo = TIPO_TO_ID[tipo];
         } else {
-          // Si ya es número, usarlo directamente
           whereClause.id_tipo = parseInt(tipo);
         }
       }
@@ -86,9 +85,9 @@ const clienteController = {
         }
       });
       
-      // Convertir id_tipo a string de tipo para el frontend
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
         tipo: cliente.tipo_cliente ? ID_TO_TIPO[cliente.id_tipo] : 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -106,6 +105,7 @@ const clienteController = {
     }
   },
 
+  // 2. Crear cliente
   async createCliente(req, res) {
     try {
       const { 
@@ -116,46 +116,31 @@ const clienteController = {
         tipo,
       } = req.body;
       
-      if (!nombre) {
+      if (!nombre || !telefono || !email) {
         return res.status(400).json({
           success: false,
-          message: 'Nombre es requerido'
+          message: 'Nombre, teléfono y email son requeridos'
         });
       }
       
-      if (!telefono) {
-        return res.status(400).json({
-          success: false,
-          message: 'Teléfono es requerido'
-        });
-      }
-      
-      if (!email) {
-        return res.status(400).json({
-          success: false,
-          message: 'Email es requerido'
-        });
-      }
-      
-      // Determinar tipo (1 = Odontólogo, 2 = Clínica Dental)
-      let tipoId = 1; // Odontólogo por defecto
+      let tipoId = 1;
       if (tipo === 'CLINICA_DENTAL') {
         tipoId = 2;
       }
       
       console.log('📝 Creando cliente para admin:', req.admin.id, req.admin.nombre);
-      console.log('📝 Datos:', { nombre, telefono, celular, email, tipoId });
       
       const cliente = await prisma.cliente.create({
         data: {
           nombre,
           telefono,
           celular: celular || null,
-          email: email,
-          tipo_cliente: {           // ✅ usar relación tipo_cliente
+          email,
+          saldo_a_favor: 0, // ✅ NUEVO: saldo inicial
+          tipo_cliente: {
             connect: { id: tipoId }
           },
-          administrador: {          // ✅ usar relación administrador
+          administrador: {
             connect: { id: req.admin.id }
           }
         }
@@ -164,7 +149,10 @@ const clienteController = {
       res.status(201).json({
         success: true,
         message: 'Cliente creado exitosamente',
-        data: cliente
+        data: {
+          ...cliente,
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor) // ✅ NUEVO
+        }
       });
     } catch (error) {
       console.error('Error creando cliente:', error.message);
@@ -201,7 +189,7 @@ const clienteController = {
       const cliente = await prisma.cliente.findFirst({
         where: { 
           id: parseInt(id),
-          id_administrador: req.admin.id  // ✅ VERIFICA que sea de este admin
+          id_administrador: req.admin.id
         },
         include: {
           administrador: withAdmin === 'true' ? {
@@ -227,7 +215,11 @@ const clienteController = {
               }
             },
             orderBy: { fecha_pedido: 'desc' }
-          } : false
+          } : false,
+          movimiento_saldo: { // ✅ NUEVO: incluir movimientos de saldo
+            orderBy: { fecha_insert: 'desc' },
+            take: 10
+          }
         }
       });
       
@@ -238,11 +230,17 @@ const clienteController = {
         });
       }
       
-      // Formatear para el frontend
       const clienteFormateado = {
         ...cliente,
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
-        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
+        tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
+        movimientos_saldo: cliente.movimiento_saldo?.map(m => ({ // ✅ NUEVO
+          ...m,
+          monto: decimalToNumber(m.monto),
+          saldo_anterior: decimalToNumber(m.saldo_anterior),
+          saldo_posterior: decimalToNumber(m.saldo_posterior)
+        })) || []
       };
       
       res.json({
@@ -270,7 +268,6 @@ const clienteController = {
         });
       }
       
-      // ✅ Primero verificar que el cliente pertenece a este admin
       const clienteExistente = await prisma.cliente.findFirst({
         where: {
           id: parseInt(id),
@@ -285,12 +282,12 @@ const clienteController = {
         });
       }
       
-      const updateData = req.body;
+      const updateData = { ...req.body };
       
-      // No permitir cambiar el id_administrador
+      // No permitir cambiar id_administrador ni saldo_a_favor directamente
       delete updateData.id_administrador;
+      delete updateData.saldo_a_favor; // ✅ NUEVO: el saldo se maneja con endpoint aparte
       
-      // Convertir tipo string a ID si viene
       if (updateData.tipo) {
         updateData.id_tipo = TIPO_TO_ID[updateData.tipo] || 1;
         delete updateData.tipo;
@@ -315,6 +312,7 @@ const clienteController = {
       
       const clienteFormateado = {
         ...cliente,
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       };
@@ -353,7 +351,6 @@ const clienteController = {
         });
       }
       
-      // ✅ Primero verificar que el cliente pertenece a este admin
       const clienteExistente = await prisma.cliente.findFirst({
         where: {
           id: parseInt(id),
@@ -407,10 +404,10 @@ const clienteController = {
       
       const clientes = await prisma.cliente.findMany({
         where: {
-          id_administrador: req.admin.id,  // ✅ FILTRO: solo clientes de este admin
+          id_administrador: req.admin.id,
           OR: [
-            { nombre: { contains: term } },
-            { email: { contains: term } },
+            { nombre: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
             { telefono: { contains: term } },
             { celular: { contains: term } }
           ]
@@ -430,6 +427,7 @@ const clienteController = {
       
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -452,7 +450,7 @@ const clienteController = {
     try {
       await prisma.$queryRaw`SELECT 1`;
       const totalClientes = await prisma.cliente.count({
-        where: { id_administrador: req.admin.id }  // ✅ Solo de este admin
+        where: { id_administrador: req.admin.id }
       });
       
       res.json({
@@ -473,13 +471,13 @@ const clienteController = {
     }
   },
 
-  // 8. Estadísticas por tipo (SOLO 2 TIPOS) - FILTRADO POR ADMIN
+  // 8. Estadísticas por tipo
   async getStatsByTipo(req, res) {
     try {
       const groupStats = await prisma.cliente.groupBy({
         by: ['id_tipo'],
         where: {
-          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+          id_administrador: req.admin.id
         },
         _count: {
           id: true
@@ -529,12 +527,12 @@ const clienteController = {
     }
   },
 
-  // 9. Clientes con balance - FILTRADO POR ADMIN
+  // 9. Clientes con balance
   async getClientesConBalance(req, res) {
     try {
       const clientes = await prisma.cliente.findMany({
         where: {
-          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+          id_administrador: req.admin.id
         },
         include: {
           administrador: {
@@ -591,6 +589,7 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
           tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
           tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
           administrador: cliente.administrador,
@@ -618,16 +617,16 @@ const clienteController = {
     }
   },
 
-  // 10. Estadísticas generales - FILTRADO POR ADMIN
+  // 10. Estadísticas generales
   async getEstadisticas(req, res) {
     try {
       const totalClientes = await prisma.cliente.count({
-        where: { id_administrador: req.admin.id }  // ✅ Solo de este admin
+        where: { id_administrador: req.admin.id }
       });
       
       const clientesConPedidos = await prisma.cliente.count({
         where: { 
-          id_administrador: req.admin.id,  // ✅ Solo de este admin
+          id_administrador: req.admin.id,
           pedidos: {
             some: {
               fecha_delete: null
@@ -638,7 +637,7 @@ const clienteController = {
       
       const clientesConPedidosData = await prisma.cliente.findMany({
         where: {
-          id_administrador: req.admin.id,  // ✅ Solo de este admin
+          id_administrador: req.admin.id,
           pedidos: {
             some: {
               fecha_delete: null
@@ -659,12 +658,14 @@ const clienteController = {
       });
       
       let totalSaldoPendiente = 0;
+      let totalSaldoAFavor = 0; // ✅ NUEVO
       let clientesAlDia = 0;
       let clientesConMora = 0;
       
       clientesConPedidosData.forEach(cliente => {
         let totalFacturado = 0;
         let totalPagado = 0;
+        const saldoAFavor = decimalToNumber(cliente.saldo_a_favor);
         
         cliente.pedidos.forEach(pedido => {
           pedido.detalle_pedidos.forEach(detalle => {
@@ -678,6 +679,7 @@ const clienteController = {
         
         const pendiente = totalFacturado - totalPagado;
         totalSaldoPendiente += pendiente;
+        totalSaldoAFavor += saldoAFavor; // ✅ NUEVO
         
         if (pendiente === 0) clientesAlDia++;
         if (pendiente > 0) clientesConMora++;
@@ -689,6 +691,7 @@ const clienteController = {
           totalClientes,
           totalConPedidos: clientesConPedidos,
           totalSaldoPendiente,
+          totalSaldoAFavor, // ✅ NUEVO
           clientesAlDia,
           clientesConMora
         }
@@ -702,14 +705,14 @@ const clienteController = {
     }
   },
 
-  // 11. CLIENTES CON TOTALES - FILTRADO POR ADMIN
+  // 11. CLIENTES CON TOTALES
   async getClientesConTotales(req, res) {
     try {
       console.log('📊 Obteniendo clientes con totales para admin:', req.admin.id);
       
       const clientes = await prisma.cliente.findMany({
         where: {
-          id_administrador: req.admin.id  // ✅ FILTRO: solo clientes de este admin
+          id_administrador: req.admin.id
         },
         include: {
           pedidos: {
@@ -739,6 +742,7 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
           tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
           id_tipo: cliente.id_tipo,
           tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
@@ -760,6 +764,227 @@ const clienteController = {
         success: false,
         error: 'Error al obtener clientes con totales',
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
+  // ========== NUEVAS FUNCIONES PARA SALDO A FAVOR ==========
+
+  // 12. Actualizar saldo del cliente (ABONAR o DESCONTAR)
+  async actualizarSaldoCliente(req, res) {
+    try {
+      const { id_cliente, monto, tipo, descripcion, id_pedido } = req.body;
+      
+      if (!id_cliente || !monto || !tipo) {
+        return res.status(400).json({
+          success: false,
+          message: 'id_cliente, monto y tipo son requeridos'
+        });
+      }
+      
+      if (tipo !== 'ABONO' && tipo !== 'DESCUENTO') {
+        return res.status(400).json({
+          success: false,
+          message: 'Tipo debe ser ABONO o DESCUENTO'
+        });
+      }
+      
+      const montoNum = parseFloat(monto);
+      if (isNaN(montoNum) || montoNum <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El monto debe ser un número positivo'
+        });
+      }
+      
+      // Obtener cliente actual
+      const cliente = await prisma.cliente.findFirst({
+        where: {
+          id: id_cliente,
+          id_administrador: req.admin.id
+        }
+      });
+      
+      if (!cliente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado'
+        });
+      }
+      
+      const saldoActual = decimalToNumber(cliente.saldo_a_favor);
+      let nuevoSaldo;
+      
+      if (tipo === 'ABONO') {
+        nuevoSaldo = saldoActual + montoNum;
+      } else {
+        nuevoSaldo = Math.max(0, saldoActual - montoNum);
+      }
+      
+      // Usar transacción para actualizar saldo y registrar movimiento
+      const [clienteActualizado] = await prisma.$transaction([
+        prisma.cliente.update({
+          where: { id: id_cliente },
+          data: { saldo_a_favor: nuevoSaldo }
+        }),
+        prisma.movimiento_saldo.create({
+          data: {
+            id_cliente,
+            tipo,
+            monto: montoNum,
+            saldo_anterior: saldoActual,
+            saldo_posterior: nuevoSaldo,
+            descripcion: descripcion || null,
+            id_pedido: id_pedido || null,
+            id_administrador: req.admin.id
+          }
+        })
+      ]);
+      
+      res.json({
+        success: true,
+        message: `Saldo ${tipo === 'ABONO' ? 'abonado' : 'descontado'} correctamente`,
+        data: {
+          saldo_anterior: saldoActual,
+          saldo_nuevo: nuevoSaldo,
+          movimiento: tipo,
+          monto_aplicado: montoNum
+        }
+      });
+      
+    } catch (error) {
+      console.error('Error actualizando saldo:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al actualizar el saldo del cliente'
+      });
+    }
+  },
+
+  // 13. Obtener saldo actual del cliente
+  async getSaldoCliente(req, res) {
+    try {
+      const { id } = req.params;
+      
+      if (!id || isNaN(parseInt(id))) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID de cliente inválido'
+        });
+      }
+      
+      const cliente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(id),
+          id_administrador: req.admin.id
+        },
+        include: {
+          movimiento_saldo: {
+            orderBy: { fecha_insert: 'desc' },
+            take: 10
+          }
+        }
+      });
+      
+      if (!cliente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado'
+        });
+      }
+      
+      res.json({
+        success: true,
+        data: {
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
+          ultimos_movimientos: cliente.movimiento_saldo.map(m => ({
+            ...m,
+            monto: decimalToNumber(m.monto),
+            saldo_anterior: decimalToNumber(m.saldo_anterior),
+            saldo_posterior: decimalToNumber(m.saldo_posterior)
+          }))
+        }
+      });
+    } catch (error) {
+      console.error('Error obteniendo saldo:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al obtener el saldo del cliente'
+      });
+    }
+  },
+
+  // 14. Obtener historial completo de movimientos de saldo
+  async getHistorialSaldo(req, res) {
+    try {
+      const { id } = req.params;
+      const { limit = 50, offset = 0 } = req.query;
+      
+      if (!id || isNaN(parseInt(id))) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID de cliente inválido'
+        });
+      }
+      
+      // Verificar que el cliente pertenece al admin
+      const cliente = await prisma.cliente.findFirst({
+        where: {
+          id: parseInt(id),
+          id_administrador: req.admin.id
+        },
+        select: { id: true, nombre: true }
+      });
+      
+      if (!cliente) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado'
+        });
+      }
+      
+      const movimientos = await prisma.movimiento_saldo.findMany({
+        where: { id_cliente: parseInt(id) },
+        orderBy: { fecha_insert: 'desc' },
+        skip: parseInt(offset),
+        take: parseInt(limit),
+        include: {
+          administrador: {
+            select: { id: true, nombre: true }
+          },
+          pedidos: {
+            select: { id: true, fecha_pedido: true }
+          }
+        }
+      });
+      
+      const total = await prisma.movimiento_saldo.count({
+        where: { id_cliente: parseInt(id) }
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          cliente: {
+            id: cliente.id,
+            nombre: cliente.nombre
+          },
+          movimientos: movimientos.map(m => ({
+            ...m,
+            monto: decimalToNumber(m.monto),
+            saldo_anterior: decimalToNumber(m.saldo_anterior),
+            saldo_posterior: decimalToNumber(m.saldo_posterior)
+          })),
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset)
+        }
+      });
+    } catch (error) {
+      console.error('Error obteniendo historial de saldo:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al obtener el historial de saldo'
       });
     }
   }
