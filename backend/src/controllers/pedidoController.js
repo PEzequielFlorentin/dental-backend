@@ -1472,12 +1472,14 @@ const pedidoController = {
   },
 
   // ============================================
-  // 15. PAGAR PEDIDO CON SALDO A FAVOR DEL CLIENTE (NUEVA)
+  // 15. PAGAR PEDIDO CON SALDO A FAVOR DEL CLIENTE (CORREGIDO)
   // ============================================
   async pagarConSaldoAFavor(req, res) {
     try {
       const { id } = req.params;
       const { monto_a_usar } = req.body;
+
+      console.log('💰 Pagando pedido con saldo a favor:', { id, monto_a_usar });
 
       if (!monto_a_usar || parseFloat(monto_a_usar) <= 0) {
         return res.status(400).json({
@@ -1541,10 +1543,7 @@ const pedidoController = {
         });
       }
 
-      // Usar transacción para:
-      // 1. Descontar saldo del cliente
-      // 2. Registrar el pago
-      // 3. Registrar movimiento de saldo
+      // Usar transacción
       const resultado = await prisma.$transaction(async (tx) => {
         // 1. Descontar saldo del cliente
         const nuevoSaldo = saldoCliente - montoUsar;
@@ -1554,11 +1553,11 @@ const pedidoController = {
           data: { saldo_a_favor: nuevoSaldo }
         });
 
-        // 2. Registrar movimiento de saldo
+        // 2. Registrar movimiento de saldo - CORREGIDO: tipo 'uso'
         await tx.movimiento_saldo.create({
           data: {
             id_cliente: pedido.id_cliente,
-            tipo: 'DESCUENTO',
+            tipo: 'uso',  // ✅ CORREGIDO: 'uso' en lugar de 'DESCUENTO'
             monto: montoUsar,
             saldo_anterior: saldoCliente,
             saldo_posterior: nuevoSaldo,
@@ -1591,15 +1590,14 @@ const pedidoController = {
           pago,
           detallePago,
           saldoRestante: nuevoSaldo,
-          saldoUsado: montoUsar,
-          pedidoPagadoCompletamente: (totalPagadoActual + montoUsar) >= totalPedido
+          saldoUsado: montoUsar
         };
       });
 
       const nuevoTotalPagado = totalPagadoActual + montoUsar;
       const pedidoCompletamentePagado = nuevoTotalPagado >= totalPedido;
 
-      // Si el pedido quedó completamente pagado, actualizar estado de los detalles a "pagado"
+      // Si el pedido quedó completamente pagado, actualizar estado de los detalles
       if (pedidoCompletamentePagado) {
         const estadoPagado = await prisma.estado.findFirst({
           where: { descripcion: { contains: 'pagado', mode: 'insensitive' } }
@@ -1734,7 +1732,7 @@ const pedidoController = {
   },
 
   // ============================================
-  // 17. REGISTRAR PAGO MIXTO (SALDO + EFECTIVO/TRANSFERENCIA) (NUEVA)
+  // 17. REGISTRAR PAGO MIXTO (SALDO + EFECTIVO/TRANSFERENCIA) (CORREGIDO)
   // ============================================
   async registrarPagoMixto(req, res) {
     try {
@@ -1822,10 +1820,11 @@ const pedidoController = {
             data: { saldo_a_favor: nuevoSaldo }
           });
 
+          // CORREGIDO: tipo 'uso'
           await tx.movimiento_saldo.create({
             data: {
               id_cliente: pedido.id_cliente,
-              tipo: 'DESCUENTO',
+              tipo: 'uso',  // ✅ CORREGIDO: 'uso' en lugar de 'DESCUENTO'
               monto: montoSaldo,
               saldo_anterior: saldoAFavor,
               saldo_posterior: nuevoSaldo,
@@ -1850,8 +1849,7 @@ const pedidoController = {
               id_pago: pago.id,
               id_pedido: pedido.id,
               valor: montoEfectivo,
-              fecha_pago: new Date(),
-              metodo: metodo
+              fecha_pago: new Date()
             }
           });
         }
