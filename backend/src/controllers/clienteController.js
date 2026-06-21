@@ -17,6 +17,23 @@ const ID_TO_TIPO = {
   2: 'CLINICA_DENTAL'
 };
 
+// ✅ MAPEO DE TIPOS PARA LA BASE DE DATOS
+// La base de datos solo acepta: 'carga', 'uso', 'ajuste'
+const MAP_TIPO_TO_DB = {
+  'ABONO': 'carga',
+  'DESCUENTO': 'uso',
+  'carga': 'carga',
+  'uso': 'uso',
+  'ajuste': 'ajuste'
+};
+
+// ✅ MAPEO INVERSO PARA RESPUESTAS
+const MAP_TIPO_FROM_DB = {
+  'carga': 'ABONO',
+  'uso': 'DESCUENTO',
+  'ajuste': 'AJUSTE'
+};
+
 const clienteController = {
   // ========== FUNCIONES BÁSICAS ==========
   
@@ -35,7 +52,7 @@ const clienteController = {
       
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
-        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -87,7 +104,7 @@ const clienteController = {
       
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
-        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
         tipo: cliente.tipo_cliente ? ID_TO_TIPO[cliente.id_tipo] : 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -136,7 +153,7 @@ const clienteController = {
           telefono,
           celular: celular || null,
           email,
-          saldo_a_favor: 0, // ✅ NUEVO: saldo inicial
+          saldo_a_favor: 0,
           tipo_cliente: {
             connect: { id: tipoId }
           },
@@ -151,7 +168,7 @@ const clienteController = {
         message: 'Cliente creado exitosamente',
         data: {
           ...cliente,
-          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor) // ✅ NUEVO
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor)
         }
       });
     } catch (error) {
@@ -216,7 +233,7 @@ const clienteController = {
             },
             orderBy: { fecha_pedido: 'desc' }
           } : false,
-          movimiento_saldo: { // ✅ NUEVO: incluir movimientos de saldo
+          movimiento_saldo: {
             orderBy: { fecha_insert: 'desc' },
             take: 10
           }
@@ -232,14 +249,15 @@ const clienteController = {
       
       const clienteFormateado = {
         ...cliente,
-        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
-        movimientos_saldo: cliente.movimiento_saldo?.map(m => ({ // ✅ NUEVO
+        movimientos_saldo: cliente.movimiento_saldo?.map(m => ({
           ...m,
           monto: decimalToNumber(m.monto),
           saldo_anterior: decimalToNumber(m.saldo_anterior),
-          saldo_posterior: decimalToNumber(m.saldo_posterior)
+          saldo_posterior: decimalToNumber(m.saldo_posterior),
+          tipo_original: MAP_TIPO_FROM_DB[m.tipo] || m.tipo // ✅ MAPEAR EL TIPO A SU ORIGINAL
         })) || []
       };
       
@@ -284,9 +302,8 @@ const clienteController = {
       
       const updateData = { ...req.body };
       
-      // No permitir cambiar id_administrador ni saldo_a_favor directamente
       delete updateData.id_administrador;
-      delete updateData.saldo_a_favor; // ✅ NUEVO: el saldo se maneja con endpoint aparte
+      delete updateData.saldo_a_favor;
       
       if (updateData.tipo) {
         updateData.id_tipo = TIPO_TO_ID[updateData.tipo] || 1;
@@ -312,7 +329,7 @@ const clienteController = {
       
       const clienteFormateado = {
         ...cliente,
-        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       };
@@ -427,7 +444,7 @@ const clienteController = {
       
       const clientesFormateados = clientes.map(cliente => ({
         ...cliente,
-        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+        saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
         tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
         tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo'
       }));
@@ -589,7 +606,7 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
-          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
           tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
           tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
           administrador: cliente.administrador,
@@ -658,7 +675,7 @@ const clienteController = {
       });
       
       let totalSaldoPendiente = 0;
-      let totalSaldoAFavor = 0; // ✅ NUEVO
+      let totalSaldoAFavor = 0;
       let clientesAlDia = 0;
       let clientesConMora = 0;
       
@@ -679,7 +696,7 @@ const clienteController = {
         
         const pendiente = totalFacturado - totalPagado;
         totalSaldoPendiente += pendiente;
-        totalSaldoAFavor += saldoAFavor; // ✅ NUEVO
+        totalSaldoAFavor += saldoAFavor;
         
         if (pendiente === 0) clientesAlDia++;
         if (pendiente > 0) clientesConMora++;
@@ -691,7 +708,7 @@ const clienteController = {
           totalClientes,
           totalConPedidos: clientesConPedidos,
           totalSaldoPendiente,
-          totalSaldoAFavor, // ✅ NUEVO
+          totalSaldoAFavor,
           clientesAlDia,
           clientesConMora
         }
@@ -742,7 +759,7 @@ const clienteController = {
           telefono: cliente.telefono,
           celular: cliente.celular,
           email: cliente.email,
-          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor), // ✅ NUEVO
+          saldo_a_favor: decimalToNumber(cliente.saldo_a_favor),
           tipo: ID_TO_TIPO[cliente.id_tipo] || 'ODONTOLOGO',
           id_tipo: cliente.id_tipo,
           tipoLabel: cliente.tipo_cliente?.descripcion || 'Odontólogo',
@@ -770,22 +787,26 @@ const clienteController = {
 
   // ========== NUEVAS FUNCIONES PARA SALDO A FAVOR ==========
 
-  // 12. Actualizar saldo del cliente (ABONAR o DESCONTAR)
+  // ✅ 12. Actualizar saldo del cliente - CORREGIDO
   async actualizarSaldoCliente(req, res) {
     try {
-      const { id_cliente, monto, tipo, descripcion, id_pedido } = req.body;
+      // Obtener id_cliente de params o body
+      const id_cliente = req.params.id ? parseInt(req.params.id) : req.body.id_cliente;
+      const { monto, tipo, descripcion, id_pedido } = req.body;
       
-      if (!id_cliente || !monto || !tipo) {
+      console.log('📥 Recibido:', { id_cliente, monto, tipo, descripcion, id_pedido });
+      
+      if (!id_cliente || isNaN(id_cliente)) {
         return res.status(400).json({
           success: false,
-          message: 'id_cliente, monto y tipo son requeridos'
+          message: 'ID de cliente inválido'
         });
       }
       
-      if (tipo !== 'ABONO' && tipo !== 'DESCUENTO') {
+      if (!monto || !tipo) {
         return res.status(400).json({
           success: false,
-          message: 'Tipo debe ser ABONO o DESCUENTO'
+          message: 'monto y tipo son requeridos'
         });
       }
       
@@ -795,6 +816,36 @@ const clienteController = {
           success: false,
           message: 'El monto debe ser un número positivo'
         });
+      }
+      
+      // ✅ MAPEAR EL TIPO A LOS VALORES QUE ESPERA LA BASE DE DATOS
+      // La base de datos solo acepta: 'carga', 'uso', 'ajuste'
+      let tipoDB = '';
+      let tipoOriginal = '';
+      
+      // Determinar el tipo original
+      const tipoUpper = tipo.toUpperCase();
+      if (tipoUpper === 'ABONO' || tipoUpper === 'CARGA') {
+        tipoDB = 'carga';
+        tipoOriginal = 'ABONO';
+      } else if (tipoUpper === 'DESCUENTO' || tipoUpper === 'USO') {
+        tipoDB = 'uso';
+        tipoOriginal = 'DESCUENTO';
+      } else if (tipoUpper === 'AJUSTE') {
+        tipoDB = 'ajuste';
+        tipoOriginal = 'AJUSTE';
+      } else {
+        // Si el tipo ya está en minúsculas (carga, uso, ajuste)
+        const tipoLower = tipo.toLowerCase();
+        if (['carga', 'uso', 'ajuste'].includes(tipoLower)) {
+          tipoDB = tipoLower;
+          tipoOriginal = MAP_TIPO_FROM_DB[tipoLower] || tipoLower;
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Tipo inválido. Debe ser ABONO, DESCUENTO, carga, uso o ajuste'
+          });
+        }
       }
       
       // Obtener cliente actual
@@ -808,33 +859,43 @@ const clienteController = {
       if (!cliente) {
         return res.status(404).json({
           success: false,
-          message: 'Cliente no encontrado'
+          message: 'Cliente no encontrado o no tienes permisos'
         });
       }
       
       const saldoActual = decimalToNumber(cliente.saldo_a_favor);
       let nuevoSaldo;
+      let mensajeMovimiento = '';
       
-      if (tipo === 'ABONO') {
+      // ✅ Lógica de negocio según el tipo original
+      if (tipoOriginal === 'ABONO' || tipoDB === 'carga') {
         nuevoSaldo = saldoActual + montoNum;
-      } else {
+        mensajeMovimiento = 'Abono';
+      } else if (tipoOriginal === 'DESCUENTO' || tipoDB === 'uso') {
         nuevoSaldo = Math.max(0, saldoActual - montoNum);
+        mensajeMovimiento = 'Descuento';
+      } else {
+        // Ajuste: puede ser sumar o restar según el caso
+        nuevoSaldo = saldoActual + montoNum;
+        mensajeMovimiento = 'Ajuste';
       }
       
+      console.log(`💰 Saldo actual: $${saldoActual}, Nuevo saldo: $${nuevoSaldo}`);
+      
       // Usar transacción para actualizar saldo y registrar movimiento
-      const [clienteActualizado] = await prisma.$transaction([
+      const [clienteActualizado, movimiento] = await prisma.$transaction([
         prisma.cliente.update({
           where: { id: id_cliente },
           data: { saldo_a_favor: nuevoSaldo }
         }),
         prisma.movimiento_saldo.create({
           data: {
-            id_cliente,
-            tipo,
+            id_cliente: id_cliente,
+            tipo: tipoDB, // ✅ 'carga', 'uso' o 'ajuste' - lo que espera la BD
             monto: montoNum,
             saldo_anterior: saldoActual,
             saldo_posterior: nuevoSaldo,
-            descripcion: descripcion || null,
+            descripcion: descripcion || `${mensajeMovimiento} de saldo`,
             id_pedido: id_pedido || null,
             id_administrador: req.admin.id
           }
@@ -843,20 +904,26 @@ const clienteController = {
       
       res.json({
         success: true,
-        message: `Saldo ${tipo === 'ABONO' ? 'abonado' : 'descontado'} correctamente`,
+        message: `Saldo ${mensajeMovimiento.toLowerCase()} correctamente`,
         data: {
           saldo_anterior: saldoActual,
           saldo_nuevo: nuevoSaldo,
-          movimiento: tipo,
-          monto_aplicado: montoNum
+          movimiento: tipoOriginal,
+          monto_aplicado: montoNum,
+          cliente: {
+            id: clienteActualizado.id,
+            nombre: clienteActualizado.nombre,
+            saldo_a_favor: decimalToNumber(clienteActualizado.saldo_a_favor)
+          }
         }
       });
       
     } catch (error) {
-      console.error('Error actualizando saldo:', error);
+      console.error('❌ Error actualizando saldo:', error);
       res.status(500).json({
         success: false,
-        error: 'Error al actualizar el saldo del cliente'
+        error: 'Error al actualizar el saldo del cliente',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
@@ -901,7 +968,8 @@ const clienteController = {
             ...m,
             monto: decimalToNumber(m.monto),
             saldo_anterior: decimalToNumber(m.saldo_anterior),
-            saldo_posterior: decimalToNumber(m.saldo_posterior)
+            saldo_posterior: decimalToNumber(m.saldo_posterior),
+            tipo_original: MAP_TIPO_FROM_DB[m.tipo] || m.tipo // ✅ MAPEAR EL TIPO
           }))
         }
       });
@@ -973,7 +1041,8 @@ const clienteController = {
             ...m,
             monto: decimalToNumber(m.monto),
             saldo_anterior: decimalToNumber(m.saldo_anterior),
-            saldo_posterior: decimalToNumber(m.saldo_posterior)
+            saldo_posterior: decimalToNumber(m.saldo_posterior),
+            tipo_original: MAP_TIPO_FROM_DB[m.tipo] || m.tipo // ✅ MAPEAR EL TIPO
           })),
           total,
           limit: parseInt(limit),
